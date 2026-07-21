@@ -17,6 +17,25 @@ export function haversineMeters(a: LngLat, b: LngLat): number {
   return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+/** Initial great-circle bearing from `a` to `b`, in degrees clockwise from
+ *  true north (0–360). */
+export function bearingDegrees(a: LngLat, b: LngLat): number {
+  const lat1 = toRad(a[1]);
+  const lat2 = toRad(b[1]);
+  const dLng = toRad(b[0] - a[0]);
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+const COMPASS_POINTS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+
+/** "142° SE" — a bearing in degrees plus its nearest 16-point compass label. */
+export function formatBearing(degrees: number): string {
+  const point = COMPASS_POINTS[Math.round(degrees / 22.5) % 16];
+  return `${Math.round(degrees)}° ${point}`;
+}
+
 /** A coordinate `dxMeters` east and `dyMeters` north of `center` (flat-earth
  *  approximation — good enough at station-footprint scale). */
 export function offsetMeters(center: LngLat, dxMeters: number, dyMeters: number): LngLat {
@@ -206,12 +225,27 @@ export function serviceWayIds(service: Service): string[] {
   return [...new Set(service.patterns.flatMap((p) => p.wayIds))];
 }
 
+// Cached by the ways array's own reference (immutable-replacement
+// convention, same as wayPathCache) — patternPath runs on every animation
+// frame for every pattern (see map/vehicles.ts), so a linear ways.find per
+// wayId adds up fast on a large imported system.
+const wayByIdCache = new WeakMap<Way[], Map<string, Way>>();
+
+function wayById(ways: Way[]): Map<string, Way> {
+  let index = wayByIdCache.get(ways);
+  if (index) return index;
+  index = new Map(ways.map((w) => [w.id, w]));
+  wayByIdCache.set(ways, index);
+  return index;
+}
+
 /** The concatenated resolved path a single pattern (branch) actually
  *  traces — its ways, in order, stitched into one polyline. */
 export function patternPath(ways: Way[], pattern: Pattern): LngLat[] {
+  const byId = wayById(ways);
   const path: LngLat[] = [];
   for (const wayId of pattern.wayIds) {
-    const way = ways.find((w) => w.id === wayId);
+    const way = byId.get(wayId);
     const seg = way ? resolveWayPath(way) : [];
     if (seg.length < 2) continue;
     path.push(...(path.length ? seg.slice(1) : seg));
@@ -330,11 +364,20 @@ export interface Snap {
  * typeId filter below; a road has no business snapping onto a rail track a
  * screen's-width away). Left unset for station-anchoring snaps, where any
  * way type is a valid stop.
+ *
+ * Candidates are narrowed via the same segment grid servedWayIds uses
+ * (below) before the exact nearestOnPath check runs — a brute-force scan of
+ * every way here was the same class of problem servedWayIds already had to
+ * solve at real-GTFS scale (station drag, way-endpoint join-detection while
+ * drawing, and "adopt existing infrastructure" all route through this).
  */
 export function snap(ways: Way[], coord: LngLat, maxMeters: number, exclude?: Set<string>, typeId?: string): Snap | null {
+  const byId = wayById(ways);
   let best: Snap | null = null;
-  for (const way of ways) {
-    if (exclude?.has(way.id)) continue;
+  for (const id of candidateWayIdsNear(coord, ways, maxMeters)) {
+    if (exclude?.has(id)) continue;
+    const way = byId.get(id);
+    if (!way) continue;
     if (typeId && way.typeId !== typeId) continue;
     const near = nearestOnPath(resolveWayPath(way), coord);
     if (!near || near.distMeters > maxMeters) continue;
@@ -345,13 +388,124 @@ export function snap(ways: Way[], coord: LngLat, maxMeters: number, exclude?: Se
   return best;
 }
 
+// A uniform lat/lng grid over every SEGMENT (not whole way) of a given ways
+// array, cached by that array's own reference — safe because buildFeatures
+// recomputes `visibleWays` as a fresh array on every rebuild, so an old
+// index is simply never looked up again and falls out of the WeakMap.
+// Per-WAY bounding boxes turned out not to help here: a real bus route's
+// Way can span the whole city, so its bbox rejects almost nothing. Bucketing
+// by segment does — a station only ever needs the handful of segments in
+// its own neighborhood, not the other ~120,000 points somewhere else on the
+// map. Without this, buildFeatures's per-station interchange check (every
+// station × every segment of every way) was O(stations × total way points):
+// fine for a few dozen hand-drawn stations, but a real GTFS import
+// (thousands of stations, hundreds of detailed street-following shapes,
+// ~120,000 points total) turned that into ~460 million segment checks and
+// froze the tab. Confirmed live against RTC Southern Nevada's real feed.
+const CELL_DEG = 0.003; // ~300m at Vegas's latitude — a few INTERCHANGE_METERS-widths per cell keeps neighborhoods small without so many cells that a segment spanning a boundary gets missed.
+
+interface GridSegment {
+  wayId: string;
+  a: LngLat;
+  b: LngLat;
+}
+
+function cellKey(cx: number, cy: number): string {
+  return `${cx}:${cy}`;
+}
+
+// A degree of longitude covers cos(latitude) as many meters as a degree of
+// latitude — 111,320m is only correct on the equator. Using it unadjusted for
+// the longitude (dx) axis UNDERCOUNTS how many cells maxMeters actually spans
+// east-west away from the equator (at Vegas's ~36°N, a longitude cell is only
+// ~81% as wide in meters as a latitude cell), so a candidate segment within
+// maxMeters could sit just outside the scanned dx range and never be found.
+// Clamped so a near-pole latitude (cos → 0) can't blow this up into scanning
+// an unbounded number of cells.
+function lngCellRadius(maxMeters: number, latDeg: number): number {
+  const metersPerDegLng = 111_320 * Math.max(Math.cos((latDeg * Math.PI) / 180), 0.01);
+  return Math.ceil(maxMeters / metersPerDegLng / CELL_DEG) + 1;
+}
+
+function buildSegmentGrid(ways: Way[]): Map<string, GridSegment[]> {
+  const grid = new Map<string, GridSegment[]>();
+  for (const way of ways) {
+    const path = resolveWayPath(way);
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1];
+      const b = path[i];
+      const cx0 = Math.floor(Math.min(a[0], b[0]) / CELL_DEG);
+      const cx1 = Math.floor(Math.max(a[0], b[0]) / CELL_DEG);
+      const cy0 = Math.floor(Math.min(a[1], b[1]) / CELL_DEG);
+      const cy1 = Math.floor(Math.max(a[1], b[1]) / CELL_DEG);
+      const seg: GridSegment = { wayId: way.id, a, b };
+      for (let cx = cx0; cx <= cx1; cx++) {
+        for (let cy = cy0; cy <= cy1; cy++) {
+          const key = cellKey(cx, cy);
+          const bucket = grid.get(key);
+          if (bucket) bucket.push(seg);
+          else grid.set(key, [seg]);
+        }
+      }
+    }
+  }
+  return grid;
+}
+
+const segmentGridCache = new WeakMap<Way[], Map<string, GridSegment[]>>();
+
+// Candidate way IDs for snap(): every way with a segment inside coord's
+// cell-radius, reusing the same grid buildSegmentGrid/segmentGridCache
+// already maintain for servedWayIds — no exact distance computed here (that
+// happens once, per candidate, in snap()'s own nearestOnPath call below),
+// just cheap cell-bucket membership.
+function candidateWayIdsNear(coord: LngLat, ways: Way[], maxMeters: number): Set<string> {
+  let grid = segmentGridCache.get(ways);
+  if (!grid) {
+    grid = buildSegmentGrid(ways);
+    segmentGridCache.set(ways, grid);
+  }
+  const cellRadiusLat = Math.ceil(maxMeters / 111_320 / CELL_DEG) + 1;
+  const cellRadiusLng = lngCellRadius(maxMeters, coord[1]);
+  const cx = Math.floor(coord[0] / CELL_DEG);
+  const cy = Math.floor(coord[1] / CELL_DEG);
+  const ids = new Set<string>();
+  for (let dx = -cellRadiusLng; dx <= cellRadiusLng; dx++) {
+    for (let dy = -cellRadiusLat; dy <= cellRadiusLat; dy++) {
+      const bucket = grid.get(cellKey(cx + dx, cy + dy));
+      if (!bucket) continue;
+      for (const seg of bucket) ids.add(seg.wayId);
+    }
+  }
+  return ids;
+}
+
 /** IDs of every way whose path passes within maxMeters of a coordinate. */
 export function servedWayIds(coord: LngLat, ways: Way[], maxMeters: number): string[] {
-  const ids: string[] = [];
-  for (const way of ways) {
-    const near = nearestOnPath(resolveWayPath(way), coord);
-    if (near && near.distMeters <= maxMeters) ids.push(way.id);
+  let grid = segmentGridCache.get(ways);
+  if (!grid) {
+    grid = buildSegmentGrid(ways);
+    segmentGridCache.set(ways, grid);
   }
+  const cellRadiusLat = Math.ceil(maxMeters / 111_320 / CELL_DEG) + 1; // +1 cell of margin for anything straddling a boundary
+  const cellRadiusLng = lngCellRadius(maxMeters, coord[1]);
+  const cx = Math.floor(coord[0] / CELL_DEG);
+  const cy = Math.floor(coord[1] / CELL_DEG);
+  const bestByWay = new Map<string, number>();
+  for (let dx = -cellRadiusLng; dx <= cellRadiusLng; dx++) {
+    for (let dy = -cellRadiusLat; dy <= cellRadiusLat; dy++) {
+      const bucket = grid.get(cellKey(cx + dx, cy + dy));
+      if (!bucket) continue;
+      for (const seg of bucket) {
+        const { point } = projectOnSegment(coord, seg.a, seg.b);
+        const d = haversineMeters(coord, point);
+        const prev = bestByWay.get(seg.wayId);
+        if (prev === undefined || d < prev) bestByWay.set(seg.wayId, d);
+      }
+    }
+  }
+  const ids: string[] = [];
+  for (const [wayId, d] of bestByWay) if (d <= maxMeters) ids.push(wayId);
   return ids;
 }
 

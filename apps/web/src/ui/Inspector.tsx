@@ -18,10 +18,10 @@ import {
 } from "@transitmapper/core/model/catalog";
 import type { MultiSelectItem, Selection, Tool } from "../editor/store";
 import { estimateWayCapitalCost, formatUsdCompact } from "@transitmapper/core/model/cost";
-import { INTERCHANGE_METERS, formatKm, servedWayIds, serviceWayIds, wayLengthMeters } from "@transitmapper/core/model/geo";
+import { INTERCHANGE_METERS, bearingDegrees, formatBearing, formatKm, servedWayIds, serviceWayIds, wayLengthMeters } from "@transitmapper/core/model/geo";
 import { getComponent } from "@transitmapper/core/model/components";
 import { isOneWay, wayCapacity } from "@transitmapper/core/model/profile";
-import type { LineGeometry, Pattern, ScheduleDayScope, Station, TransitSystem } from "@transitmapper/core/model/system";
+import type { LineGeometry, Pattern, ScheduleDayScope, Station, TransitSystem, Way } from "@transitmapper/core/model/system";
 import { ColorField } from "./ColorField";
 import { CrossSectionEditor } from "./CrossSectionEditor";
 import { InspectorTabs, type InspectorTab } from "./InspectorTabs";
@@ -440,9 +440,9 @@ function MultiInspector({ items }: MultiInspectorProps) {
   );
 }
 
-function lengthOfWays(system: TransitSystem, wayIds: string[]): number {
+function lengthOfWays(ways: Way[], wayIds: string[]): number {
   return wayIds.reduce((sum, wid) => {
-    const w = system.ways.find((x) => x.id === wid);
+    const w = ways.find((x) => x.id === wid);
     return sum + (w ? wayLengthMeters(w) : 0);
   }, 0);
 }
@@ -454,8 +454,8 @@ function lengthOfWays(system: TransitSystem, wayIds: string[]): number {
 // branch pattern only lists stops on its own ways, not a shared trunk's
 // (reconstructing "which trunk stops feed this branch" needs graph
 // traversal through junctions, out of scope for this derived display).
-function orderedStopsForPattern(system: TransitSystem, pattern: Pattern): Station[] {
-  return system.stations
+function orderedStopsForPattern(stations: Station[], pattern: Pattern): Station[] {
+  return stations
     .filter((st): st is Station & { anchor: NonNullable<Station["anchor"]> } => !!st.anchor && pattern.wayIds.includes(st.anchor.wayId))
     .slice()
     .sort((a, b) => {
@@ -470,7 +470,17 @@ interface ServiceInspectorProps {
 
 function ServiceInspector({ id }: ServiceInspectorProps) {
   const service = useEditor((s) => s.system.services.find((sv) => sv.id === id));
-  const system = useEditor((s) => s.system);
+  // Narrow selectors, not the whole `system` — that object is a fresh
+  // reference on EVERY store mutation (any drag frame, any unrelated edit
+  // elsewhere, a GTFS batch merging in), so selecting it wholesale re-rendered
+  // this panel on every single one of those instead of only when something it
+  // actually reads (ways/services/palette) changed. Confirmed live: with a
+  // service selected, dragging an unrelated way re-rendered this at drag-
+  // frame rate.
+  const ways = useEditor((s) => s.system.ways);
+  const services = useEditor((s) => s.system.services);
+  const stations = useEditor((s) => s.system.stations);
+  const palette = useEditor((s) => s.system.palette);
   const readOnly = useEditor((s) => s.readOnly);
   const setServiceName = useEditor((s) => s.setServiceName);
   const setServiceMode = useEditor((s) => s.setServiceMode);
@@ -506,9 +516,9 @@ function ServiceInspector({ id }: ServiceInspectorProps) {
 
   if (!service) return <EmptyInspector />;
   const singlePattern = service.patterns.length === 1 ? service.patterns[0] : null;
-  const singleWay = singlePattern?.wayIds.length === 1 ? system.ways.find((w) => w.id === singlePattern.wayIds[0]) : undefined;
-  const length = service.patterns.reduce((sum, p) => sum + lengthOfWays(system, p.wayIds), 0);
-  const patternStops = service.patterns.map((p) => ({ pattern: p, stops: orderedStopsForPattern(system, p) }));
+  const singleWay = singlePattern?.wayIds.length === 1 ? ways.find((w) => w.id === singlePattern.wayIds[0]) : undefined;
+  const length = service.patterns.reduce((sum, p) => sum + lengthOfWays(ways, p.wayIds), 0);
+  const patternStops = service.patterns.map((p) => ({ pattern: p, stops: orderedStopsForPattern(stations, p) }));
   const totalStops = new Set(patternStops.flatMap(({ stops }) => stops.map((st) => st.id))).size;
   const isAddingBranch = addingPatternForServiceId === id;
   const hasFullSchedule = !!service.schedule && service.schedule.length > 0;
@@ -546,7 +556,7 @@ function ServiceInspector({ id }: ServiceInspectorProps) {
           </div>
 
           <div className="insp-field">
-            <ColorField value={service.color} palette={system.palette} disabled={readOnly} onChange={(c) => setServiceColor(id, c)} onAddToPalette={addPaletteColor} />
+            <ColorField value={service.color} palette={palette} disabled={readOnly} onChange={(c) => setServiceColor(id, c)} onAddToPalette={addPaletteColor} />
           </div>
 
           <div className="stats">
@@ -712,7 +722,7 @@ function ServiceInspector({ id }: ServiceInspectorProps) {
 
   function renderRouteSection() {
     if (!service) return null;
-    const mergeTargets = system.services.filter((sv) => sv.id !== id && sv.modeId === service.modeId);
+    const mergeTargets = services.filter((sv) => sv.id !== id && sv.modeId === service.modeId);
     return (
       <>
       {!readOnly && (
@@ -759,13 +769,13 @@ function ServiceInspector({ id }: ServiceInspectorProps) {
       {!readOnly && <p className="insp-sub">Each pattern is one path this service runs — add a branch to model a line that splits.</p>}
       <ul className="pattern-list">
         {service.patterns.map((p, i) => {
-          const pWay = system.ways.find((w) => w.id === p.wayIds[0]);
+          const pWay = ways.find((w) => w.id === p.wayIds[0]);
           return (
             <li key={p.id} className="pattern-row">
               <button type="button" className="pattern-open" disabled={!pWay} onClick={() => pWay && selectAndFocus({ kind: "way", id: pWay.id })}>
                 <span className="dot ring" />
                 <span className="pattern-name">{p.name || (i === 0 ? "Main" : `Branch ${i}`)}</span>
-                <span className="pattern-meta">{formatKm(lengthOfWays(system, p.wayIds))} · {p.wayIds.length} way{p.wayIds.length === 1 ? "" : "s"}</span>
+                <span className="pattern-meta">{formatKm(lengthOfWays(ways, p.wayIds))} · {p.wayIds.length} way{p.wayIds.length === 1 ? "" : "s"}</span>
               </button>
               {!readOnly && service.patterns.length > 1 && (
                 <IconButton icon="trash" size={15} label="Delete this pattern" onClick={() => deletePattern(id, p.id)} />
@@ -868,6 +878,7 @@ function WayInspector({ id }: WayInspectorProps) {
   const separateCarriageways = useEditor((s) => s.separateCarriageways);
   const combineCarriageways = useEditor((s) => s.combineCarriageways);
   const mergeWaysAction = useEditor((s) => s.mergeWays);
+  const straightenWayAction = useEditor((s) => s.straightenWay);
   const nodes = useEditor((s) => s.system.nodes);
   const allWays = useEditor((s) => s.system.ways);
   const select = useEditor((s) => s.select);
@@ -877,6 +888,7 @@ function WayInspector({ id }: WayInspectorProps) {
   if (!way) return <EmptyInspector />;
   const type = wayType(way.typeId);
   const length = wayLengthMeters(way);
+  const bearing = bearingDegrees(way.points[0], way.points[way.points.length - 1]);
   const cost = estimateWayCapitalCost(way);
   const identityNoun = WAY_FAMILIES[type.family].identityNoun;
 
@@ -899,6 +911,12 @@ function WayInspector({ id }: WayInspectorProps) {
     .map((n) => n.refs.find((r) => r.wayId !== id))
     .map((ref) => (ref ? allWays.find((w) => w.id === ref.wayId) : undefined))
     .find((w) => !!w && w.typeId === way.typeId);
+
+  // Straighten only has something to do when a non-junction control point
+  // sits strictly between the endpoints — junction points stay put so
+  // connected ways don't desync.
+  const junctionIndexes = new Set(nodes.flatMap((n) => n.refs.filter((r) => r.wayId === id).map((r) => r.pointIndex)));
+  const canStraighten = way.points.some((_, i) => i !== 0 && i !== way.points.length - 1 && !junctionIndexes.has(i));
 
   return (
     <Panel slot="right" aria-label="Selection details">
@@ -1012,18 +1030,30 @@ function WayInspector({ id }: WayInspectorProps) {
 
           <div className="stats">
             <Stat label="Length" value={formatKm(length)} />
+            <Stat label="Bearing" value={formatBearing(bearing)} />
             <Stat label="Points" value={String(way.points.length)} />
           </div>
 
-          {!readOnly && mergeCandidate && (
+          {!readOnly && (mergeCandidate || canStraighten) && (
             <div className="insp-actions">
-              <button
-                className="ghost-btn"
-                title="Join this way end-to-end with the connected way (inverse of split)"
-                onClick={() => mergeWaysAction(id, mergeCandidate.id)}
-              >
-                Merge with connected way
-              </button>
+              {mergeCandidate && (
+                <button
+                  className="ghost-btn"
+                  title="Join this way end-to-end with the connected way (inverse of split)"
+                  onClick={() => mergeWaysAction(id, mergeCandidate.id)}
+                >
+                  Merge with connected way
+                </button>
+              )}
+              {canStraighten && (
+                <button
+                  className="ghost-btn"
+                  title="Drop every control point that isn't a junction, leaving a straight line end to end"
+                  onClick={() => straightenWayAction(id)}
+                >
+                  Straighten
+                </button>
+              )}
             </div>
           )}
 
@@ -1092,7 +1122,9 @@ interface StationInspectorProps {
 // (transfer grouping). One concern at a time.
 function StationInspector({ id }: StationInspectorProps) {
   const station = useEditor((s) => s.system.stations.find((st) => st.id === id));
-  const system = useEditor((s) => s.system);
+  // Narrow selectors, not the whole `system` — see ServiceInspector's note.
+  const ways = useEditor((s) => s.system.ways);
+  const services = useEditor((s) => s.system.services);
   const readOnly = useEditor((s) => s.readOnly);
   const setStationName = useEditor((s) => s.setStationName);
   const setStationDwellSeconds = useEditor((s) => s.setStationDwellSeconds);
@@ -1125,8 +1157,8 @@ function StationInspector({ id }: StationInspectorProps) {
   }, [focusNameToken]);
 
   if (!station) return <EmptyInspector />;
-  const nearWays = new Set(servedWayIds(station.coord, system.ways, INTERCHANGE_METERS));
-  const served = system.services.filter((sv) => serviceWayIds(sv).some((w) => nearWays.has(w)));
+  const nearWays = new Set(servedWayIds(station.coord, ways, INTERCHANGE_METERS));
+  const served = services.filter((sv) => serviceWayIds(sv).some((w) => nearWays.has(w)));
 
   const tabs: InspectorTab[] = [
     { id: "stop", label: "Stop" },
@@ -1413,12 +1445,18 @@ function FacilityInspector({ id }: FacilityInspectorProps) {
 // from LinesPanel) a service — resolve both its display name AND its real
 // selection kind, so clicking a row selects the right kind of thing instead
 // of always assuming "station".
-function memberInfo(system: TransitSystem, memberId: string): { selection: Selection; label: string } | null {
-  const station = system.stations.find((s) => s.id === memberId);
+interface MemberLookup {
+  stations: Station[];
+  facilities: TransitSystem["facilities"];
+  services: TransitSystem["services"];
+}
+
+function memberInfo({ stations, facilities, services }: MemberLookup, memberId: string): { selection: Selection; label: string } | null {
+  const station = stations.find((s) => s.id === memberId);
   if (station) return { selection: { kind: "station", id: memberId }, label: station.name || "Unnamed station" };
-  const facility = system.facilities.find((f) => f.id === memberId);
+  const facility = facilities.find((f) => f.id === memberId);
   if (facility) return { selection: { kind: "facility", id: memberId }, label: facility.name || facilityType(facility.typeId).label };
-  const service = system.services.find((sv) => sv.id === memberId);
+  const service = services.find((sv) => sv.id === memberId);
   if (service) return { selection: { kind: "service", id: memberId }, label: service.name };
   return null;
 }
@@ -1431,7 +1469,11 @@ interface GroupInspectorProps {
 // boundary and its color). Same shell as every other inspector.
 function GroupInspector({ id }: GroupInspectorProps) {
   const group = useEditor((s) => s.system.groups.find((g) => g.id === id));
-  const system = useEditor((s) => s.system);
+  // Narrow selectors, not the whole `system` — see ServiceInspector's note.
+  const stations = useEditor((s) => s.system.stations);
+  const facilities = useEditor((s) => s.system.facilities);
+  const services = useEditor((s) => s.system.services);
+  const palette = useEditor((s) => s.system.palette);
   const readOnly = useEditor((s) => s.readOnly);
   const renameGroup = useEditor((s) => s.renameGroup);
   const setGroupColor = useEditor((s) => s.setGroupColor);
@@ -1473,7 +1515,7 @@ function GroupInspector({ id }: GroupInspectorProps) {
           <div className="svc-list">
             {group.memberIds.length === 0 && <span className="panel-hint">No members yet</span>}
             {group.memberIds.map((mid) => {
-              const info = memberInfo(system, mid);
+              const info = memberInfo({ stations, facilities, services }, mid);
               return (
                 <div key={mid} className="svc-chip chip-removable">
                   {info ? (
@@ -1498,7 +1540,7 @@ function GroupInspector({ id }: GroupInspectorProps) {
         <div className="insp-section" role="tabpanel">
           {isComplex && group.color && (
             <div className="insp-field">
-              <ColorField value={group.color} palette={system.palette} disabled={readOnly} onChange={(c) => setGroupColor(id, c)} onAddToPalette={addPaletteColor} />
+              <ColorField value={group.color} palette={palette} disabled={readOnly} onChange={(c) => setGroupColor(id, c)} onAddToPalette={addPaletteColor} />
             </div>
           )}
           <GroupFootprint groupId={id} readOnly={readOnly} />

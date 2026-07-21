@@ -14,6 +14,8 @@ import {
   buildFeatures,
   LANE_DETAIL_MIN_ZOOM,
   LAYER_SPECS,
+  LYR_LANDMARKS,
+  LYR_LANDMARK_LABELS,
   registerMapIcons,
   SRC_ENDPOINT_HINT,
   SRC_FACILITIES,
@@ -21,6 +23,7 @@ import {
   SRC_HANDLES,
   SRC_CONNECTORS,
   SRC_JUNCTIONS,
+  SRC_LANDMARKS,
   SRC_LANE_ARROWS,
   SRC_LANE_MARKINGS,
   SRC_LANES,
@@ -35,6 +38,7 @@ import {
   SRC_STATIONS,
   type ViewOptions,
 } from "./layers";
+import { landmarksFeatureCollection } from "./landmarks";
 import { getMap, setMap } from "./mapRef";
 import { attachVehicleAnimation } from "./vehicles";
 import type { Map as MLMap } from "maplibre-gl";
@@ -57,7 +61,7 @@ export function MapCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const store = useEditorStore();
   const { openShortcuts, toggleUi } = useUi();
-  const { viewMode, setViewMode, visibleModes, visibleWayTypes } = useView();
+  const { viewMode, setViewMode, visibleModes, visibleWayTypes, showLandmarks } = useView();
 
   // The map-setup effect below runs once (mount-only); it reads the latest
   // view options from this ref rather than closing over React state, so a
@@ -79,6 +83,13 @@ export function MapCanvas() {
     // with no retry since nothing re-fires this effect on its own.
     if (!map || !map.getStyle()) return;
     if (viewMode === "diagram" || prevMode === "diagram") setBasemapVisible(map, viewMode !== "diagram");
+    // Landmarks are real-world reference points; Diagram's schematic
+    // coordinates aren't real geography, so they'd land somewhere meaningless.
+    const landmarksVisible = showLandmarks && viewMode !== "diagram";
+    if (map.getLayer(LYR_LANDMARKS)) {
+      map.setLayoutProperty(LYR_LANDMARKS, "visibility", landmarksVisible ? "visible" : "none");
+      map.setLayoutProperty(LYR_LANDMARK_LABELS, "visibility", landmarksVisible ? "visible" : "none");
+    }
     // Entering Diagram reframes the camera to the schematic layout's own
     // extent — its coordinates are a distorted projection of the real ones,
     // so whatever framing suited Network/Infrastructure may no longer show
@@ -95,7 +106,7 @@ export function MapCanvas() {
     // reaches the screen the moment a view mode changes, not just on the
     // next incidental interaction.
     map.triggerRepaint();
-  }, [viewMode, visibleModes, visibleWayTypes, store]);
+  }, [viewMode, visibleModes, visibleWayTypes, showLandmarks, store]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -178,6 +189,9 @@ export function MapCanvas() {
       for (const src of ALL_SOURCES) {
         if (!map.getSource(src)) map.addSource(src, { type: "geojson", data: emptyFC });
       }
+      // Static context, not system-derived — set once here rather than on
+      // every pushData() like the sources above.
+      if (!map.getSource(SRC_LANDMARKS)) map.addSource(SRC_LANDMARKS, { type: "geojson", data: landmarksFeatureCollection() });
       for (let i = 0; i < LAYER_SPECS.length; i++) {
         const spec = LAYER_SPECS[i];
         if (map.getLayer(spec.id)) continue;
@@ -220,6 +234,22 @@ export function MapCanvas() {
     };
     pushDataRef.current = pushData;
 
+    // Coalesce rebuilds to at most one per animation frame. A bulk import
+    // (streamRtcGtfsBatches) merges many batches in quick succession — each
+    // is its own store commit, and pushData's buildFeatures()+13x setData()
+    // is real main-thread work on a large system, so calling it once per
+    // commit froze the tab between batches instead of yielding smoothly.
+    // Reading store.getState() fresh inside pushData means a coalesced call
+    // still reflects the LATEST merged state, not a stale snapshot.
+    let pushDataRaf: number | null = null;
+    const schedulePushData = () => {
+      if (pushDataRaf !== null) return;
+      pushDataRaf = requestAnimationFrame(() => {
+        pushDataRaf = null;
+        pushData();
+      });
+    };
+
     map.on("load", () => {
       // MapLibre's compact attribution starts expanded once (its own default
       // "first impression" behavior, applied asynchronously as style/source
@@ -261,7 +291,7 @@ export function MapCanvas() {
 
     const unsub = store.subscribe((s, prev) => {
       if (s.system !== prev.system || s.selection !== prev.selection || s.activeWayId !== prev.activeWayId) {
-        if (map.getSource(SRC_SERVICES)) pushData();
+        if (map.getSource(SRC_SERVICES)) schedulePushData();
       }
       // Route drafting (Network view snap-to-streets drawing): show the
       // committed legs as the standard dashed draw preview.
@@ -313,6 +343,7 @@ export function MapCanvas() {
     return () => {
       ro.disconnect();
       unsub();
+      if (pushDataRaf !== null) cancelAnimationFrame(pushDataRaf);
       map.off("zoom", onZoom);
       map.off("moveend", onMoveEnd);
       detachInteractions?.();

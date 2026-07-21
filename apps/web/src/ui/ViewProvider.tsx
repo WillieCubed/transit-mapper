@@ -18,6 +18,10 @@ interface ViewState {
   toggleWayType: (id: string) => void;
   showAllModes: () => void;
   showAllWayTypes: () => void;
+  /** Hand-placed reference points (the Strip, UNLV, …) — context, not part
+   *  of the system, so its own toggle rather than a mode/way-type filter. */
+  showLandmarks: boolean;
+  toggleLandmarks: () => void;
 }
 
 const ViewContext = createContext<ViewState | null>(null);
@@ -37,6 +41,7 @@ export function ViewProvider({ children }: ViewProviderProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("network");
   const [visibleModes, setVisibleModes] = useState<Set<string>>(() => new Set(MODE_ORDER));
   const [visibleWayTypes, setVisibleWayTypes] = useState<Set<string>>(() => new Set(WAY_TYPE_ORDER));
+  const [showLandmarks, setShowLandmarks] = useState(true);
 
   const value = useMemo<ViewState>(
     () => ({
@@ -48,8 +53,10 @@ export function ViewProvider({ children }: ViewProviderProps) {
       toggleWayType: (id) => setVisibleWayTypes((prev) => toggleInSet(prev, id)),
       showAllModes: () => setVisibleModes(new Set(MODE_ORDER)),
       showAllWayTypes: () => setVisibleWayTypes(new Set(WAY_TYPE_ORDER)),
+      showLandmarks,
+      toggleLandmarks: () => setShowLandmarks((v) => !v),
     }),
-    [viewMode, visibleModes, visibleWayTypes],
+    [viewMode, visibleModes, visibleWayTypes, showLandmarks],
   );
   return <ViewContext.Provider value={value}>{children}</ViewContext.Provider>;
 }

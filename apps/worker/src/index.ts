@@ -59,6 +59,20 @@ app.get("/api/systems/:id", async (c) => {
   });
 });
 
+// Proxy RTC Southern Nevada's real GTFS feed — its own host doesn't send
+// CORS headers, so the browser can't fetch it directly; this endpoint (same
+// origin as the app) sidesteps that. Passed straight through, not cached —
+// the feed is ~6 MB and imported rarely, not worth a KV/R2 cache layer yet.
+app.get("/api/gtfs/rtc", async (c) => {
+  const upstream = await fetch("https://developer.rtcsnv.com/transitData/google_transit.zip");
+  if (!upstream.ok || !upstream.body) {
+    return c.json({ error: `RTC GTFS feed unavailable (${upstream.status})` }, 502);
+  }
+  return new Response(upstream.body, {
+    headers: { "content-type": "application/zip" },
+  });
+});
+
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 
 // Everything else is a static asset (with SPA fallback to index.html for

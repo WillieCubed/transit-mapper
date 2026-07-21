@@ -221,6 +221,30 @@ input { font: inherit; }
   background: var(--surface-2); border-radius: 8px; padding: 4px 8px;
 }
 
+/* A background import's live status (see UiProvider's ImportProgress) — no
+   backdrop, no focus trap, sits above the tool dock rather than over it so
+   it never blocks the very tools someone might keep using while it streams
+   in. Positioned by Workbench (stacked in the same centered flex column as
+   the tool dock, ahead of it) rather than a fixed pixel offset of its own —
+   a hardcoded offset here drifted out of sync with the dock's own
+   responsive position (the mobile bottom-sheet lift, the sheet-expanded
+   fade) and ended up overlapping it. Confirmed live on mobile. */
+.import-progress-pill {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
+  padding: 8px 14px; box-shadow: var(--shadow);
+  font-size: var(--fs-body-sm); color: var(--text); white-space: nowrap;
+  animation: rise-in 160ms ease;
+}
+.import-progress-pill.done { color: var(--text-muted); }
+.import-progress-pill.error { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
+.import-progress-spinner {
+  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--border-strong); border-top-color: var(--ink);
+  animation: spin 700ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* Rendered by Workbench.tsx into the same docked card as viewSwitcher, ahead
    of it in DOM order — a load error can only ever happen right after a
    shared link fails to fetch, so there's nothing it needs to share a slot
@@ -457,6 +481,15 @@ input { font: inherit; }
   display: flex; align-items: center; gap: 8px; width: 100%;
   padding: 4px 8px; border-radius: 8px; border: 1px solid transparent;
   background: transparent; text-align: left; margin-bottom: 4px;
+  /* A hand-drawn system has dozens of rows; an imported GTFS feed can have
+     thousands (RTC's real network alone is ~3800 stops) — laying out and
+     painting that many DOM nodes at once is what froze the tab on import.
+     content-visibility skips layout/paint for off-screen rows entirely;
+     contain-intrinsic-size keeps the scrollbar's size correct for rows the
+     browser hasn't measured yet (an estimate, not exact — it self-corrects
+     once a row actually scrolls into view). */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 34px;
 }
 .list-row:hover { background: var(--surface); }
 .list-row.active { background: var(--surface); box-shadow: inset 2px 0 0 var(--ink); }

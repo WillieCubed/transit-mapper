@@ -23,8 +23,11 @@ import { computeDiagramSystem } from "@transitmapper/core/model/diagramLayout";
 import { isDoubleClickFinish } from "../src/map/interactions";
 import { KEY_BINDINGS, matchesKey, resolveBinding, type KeyContext } from "../src/editor/keymap";
 import { buildFeatures, HANDLE_ICON, LAYER_SPECS } from "../src/map/layers";
+import { LANDMARKS, landmarksFeatureCollection } from "../src/map/landmarks";
 import { buildOverpassQuery, classifyOsmWay, osmElementsToWays } from "@transitmapper/core/model/import";
+import { classifyGtfsRouteType, gtfsFilesToBatchedPieces, gtfsFilesToSystemPieces, parseGtfsCsv } from "@transitmapper/core/model/gtfsImport";
 import { legendEntriesFor } from "../src/share/exportLegend";
+import { formatScaleMeters, niceScaleMeters } from "../src/share/exportScale";
 import { validateSystem } from "@transitmapper/core/model/validate";
 import { estimateWayCapitalCost, formatUsdCompact } from "@transitmapper/core/model/cost";
 import { LANE_KINDS, PROFILE_PRESETS, profilePresetsForWayType, WAY_FAMILIES, WAY_TYPES } from "@transitmapper/core/model/catalog";
@@ -58,7 +61,7 @@ import {
 } from "@transitmapper/core/geometry/junctions";
 import { wayCrossings } from "@transitmapper/core/model/validate";
 import { anchorOnWay, routeBetween, routePath } from "@transitmapper/core/model/routeGraph";
-import { haversineMeters, snap, squareFootprint } from "@transitmapper/core/model/geo";
+import { bearingDegrees, formatBearing, haversineMeters, snap, squareFootprint } from "@transitmapper/core/model/geo";
 import type { CrossSection, LngLat, Node, Service, Way } from "@transitmapper/core/model/system";
 import { armRefKey, getComponent, laneRefKey, withComponent, withoutComponent } from "@transitmapper/core/model/components";
 import { buildTimetable, dwellStopsForPattern, metersAtElapsed, VEHICLE_SPEED_MPS } from "../src/map/vehicles";
@@ -773,6 +776,46 @@ check("fork has new id + copy name", forked.id !== sys.id && forked.name.include
   check("bulk delete clears the group", store.getState().multiSelection.length === 0);
 }
 
+// --- multi-way group-drag: nudging 2+ selected ways in one batch reanchors
+// each station against its OWN anchor way, not another way in the same
+// batch (updateWayPointsBatch) ---
+{
+  fresh();
+  const wayA = store.getState().beginWay("lightRail", "straight"); // E-W
+  store.getState().addWayPoint(wayA, [-115.2, 36.1]);
+  store.getState().addWayPoint(wayA, [-115.1, 36.1]);
+  store.getState().finishWay();
+  const wayB = store.getState().beginWay("lightRail", "straight"); // N-S, a different
+  store.getState().addWayPoint(wayB, [-115.3, 36.3]); // shape/orientation than wayA, so
+  store.getState().addWayPoint(wayB, [-115.3, 36.0]); // reanchoring against the wrong way
+  store.getState().finishWay(); // in the batch would be numerically obvious.
+  const stOnA = store.getState().addStation([-115.15, 36.1], { wayId: wayA, t: 0.5 });
+
+  store.getState().toggleMultiSelect({ kind: "way", id: wayA });
+  store.getState().toggleMultiSelect({ kind: "way", id: wayB });
+  check("both ways are in the group", store.getState().multiSelection.length === 2);
+
+  const before = store.getState().system;
+  store.getState().nudgeMultiSelection(0.02, -0.03);
+  const s = store.getState().system;
+  const newWayA = s.ways.find((w) => w.id === wayA)!;
+  const newWayB = s.ways.find((w) => w.id === wayB)!;
+  check("wayA moved by the nudge delta", newWayA.points[0][0] === before.ways.find((w) => w.id === wayA)!.points[0][0] + 0.02);
+  check("wayB moved by the nudge delta too", newWayB.points[0][1] === before.ways.find((w) => w.id === wayB)!.points[0][1] - 0.03);
+
+  const expectedOnA = pointAtT(resolveWayPath(newWayA), 0.5);
+  const wrongOnB = pointAtT(resolveWayPath(newWayB), 0.5);
+  const actual = s.stations.find((st) => st.id === stOnA)!.coord;
+  check(
+    "a station anchored to one way in a multi-way batch follows THAT way's new path",
+    Math.abs(actual[0] - expectedOnA[0]) < 1e-9 && Math.abs(actual[1] - expectedOnA[1]) < 1e-9,
+  );
+  check(
+    "…not the other selected way's path (they're shaped differently enough to tell apart)",
+    Math.abs(actual[0] - wrongOnB[0]) > 1e-6 || Math.abs(actual[1] - wrongOnB[1]) > 1e-6,
+  );
+}
+
 // --- splitWayAt: splits infrastructure, keeps riding services whole,
 // re-snaps stations, and links the split point as a real junction ---
 {
@@ -1085,6 +1128,86 @@ check("fork has new id + copy name", forked.id !== sys.id && forked.name.include
   check("importWays appends the way", store.getState().system.ways.some((w) => w.id === "osm-a"));
   check("importWays creates no service for it (bare infrastructure)", store.getState().system.services.length === 0);
   check("imported way keeps its OSM source marker", store.getState().system.ways.find((w) => w.id === "osm-a")?.source === "osm:123");
+}
+
+// --- parseGtfsCsv: comma-separated + quoted-field GTFS text ---
+{
+  const rows = parseGtfsCsv('a,b,c\n1,"hello, world",3\n4,5,6\n');
+  check("parseGtfsCsv reads the header as keys", Object.keys(rows[0]).join(",") === "a,b,c");
+  check("parseGtfsCsv splits plain rows", rows.length === 2 && rows[1].a === "4");
+  check("parseGtfsCsv keeps a comma inside quotes as one field", rows[0].b === "hello, world");
+}
+
+// --- classifyGtfsRouteType: GTFS route_type → catalog mode/way type ---
+{
+  check("route_type 3 (bus) maps to bus/road", classifyGtfsRouteType(3).modeId === "bus" && classifyGtfsRouteType(3).wayTypeId === "road");
+  check("route_type 1 (subway) maps to subway/heavyRail", classifyGtfsRouteType(1).modeId === "subway" && classifyGtfsRouteType(1).wayTypeId === "heavyRail");
+  check("an unrecognized route_type falls back to bus/road", classifyGtfsRouteType(999).modeId === "bus");
+}
+
+// --- gtfsFilesToSystemPieces: a minimal fixture feed end to end ---
+{
+  const routes = "route_id,route_short_name,route_type,route_color\nR1,101,3,E4572E\n";
+  const trips = "route_id,trip_id,shape_id\nR1,T1,S1\n";
+  const shapes =
+    "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\n" +
+    "S1,36.10,-115.20,1\nS1,36.10,-115.17,2\nS1,36.10,-115.14,3\n";
+  const stops = "stop_id,stop_name,stop_lat,stop_lon\nST1,Downtown,36.10,-115.195\nST2,Midtown,36.10,-115.145\n";
+  const stopTimes = "trip_id,stop_id,stop_sequence\nT1,ST1,1\nT1,ST2,2\n";
+
+  const pieces = gtfsFilesToSystemPieces({ routes, trips, shapes, stops, stopTimes });
+  check("one shape becomes one way", pieces.ways.length === 1);
+  check("the way carries a GTFS source marker", pieces.ways[0].source === "gtfs:S1");
+  check("the way is typed road (bus route)", pieces.ways[0].typeId === "road");
+  check("one route becomes one service", pieces.services.length === 1);
+  check("the service takes its short name and mode", pieces.services[0].name === "101" && pieces.services[0].modeId === "bus");
+  check("the service has one pattern riding the shape's way", pieces.services[0].patterns.length === 1 && pieces.services[0].patterns[0].wayIds[0] === pieces.ways[0].id);
+  check("the route color round-trips as a hex color", pieces.services[0].color === "#E4572E");
+  check("both stops become stations, anchored onto the shape's way", pieces.stations.length === 2 && pieces.stations.every((s) => s.anchor?.wayId === pieces.ways[0].id));
+  check("stations keep their GTFS stop names", pieces.stations.some((s) => s.name === "Downtown") && pieces.stations.some((s) => s.name === "Midtown"));
+
+  // A stop shared by two routes/shapes stays exactly one station.
+  const trips2 = "route_id,trip_id,shape_id\nR1,T1,S1\nR1,T2,S2\n";
+  const shapes2 = shapes + "S2,36.11,-115.20,1\nS2,36.11,-115.17,2\n";
+  const stopTimes2 = stopTimes + "T2,ST1,1\n";
+  const shared = gtfsFilesToSystemPieces({ routes, trips: trips2, shapes: shapes2, stops, stopTimes: stopTimes2 });
+  check("a stop reachable from two shapes still becomes one station", shared.stations.filter((s) => s.name === "Downtown").length === 1);
+  check("two shapes on the same route become two patterns", shared.services[0].patterns.length === 2);
+}
+
+// --- gtfsFilesToBatchedPieces: batching sums to the same result, even a stop shared across batches ---
+{
+  const routes = "route_id,route_short_name,route_type,route_color\nR1,101,3,E4572E\nR2,102,3,00AEEF\nR3,103,3,2ECC71\n";
+  const trips = "route_id,trip_id,shape_id\nR1,T1,S1\nR2,T2,S2\nR3,T3,S3\n";
+  const shapes =
+    "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\n" +
+    "S1,36.10,-115.20,1\nS1,36.10,-115.17,2\n" +
+    "S2,36.11,-115.20,1\nS2,36.11,-115.17,2\n" +
+    "S3,36.12,-115.20,1\nS3,36.12,-115.17,2\n";
+  // ST-shared is served by both R1 (batch 1) and R3 (batch 2, since batchSize
+  // defaults to 2 — R1+R2 land in the first batch, R3 alone in the second).
+  const stops = "stop_id,stop_name,stop_lat,stop_lon\nST-shared,Shared Stop,36.10,-115.185\nST-r2,R2 Stop,36.11,-115.185\n";
+  const stopTimes = "trip_id,stop_id,stop_sequence\nT1,ST-shared,1\nT2,ST-r2,1\nT3,ST-shared,1\n";
+
+  const files = { routes, trips, stops, stopTimes, shapes };
+  const batches = gtfsFilesToBatchedPieces(files, 2);
+  check("3 routes at batch size 2 makes 2 batches", batches.length === 2);
+  check("the first batch carries 2 routes' worth of ways", batches[0].ways.length === 2);
+  check("the second batch carries the remaining route", batches[1].ways.length === 1);
+
+  const batchedTotal = {
+    ways: batches.flatMap((b) => b.ways),
+    services: batches.flatMap((b) => b.services),
+    stations: batches.flatMap((b) => b.stations),
+  };
+  const unbatched = gtfsFilesToSystemPieces(files);
+  check("batched ways total matches the unbatched pass", batchedTotal.ways.length === unbatched.ways.length);
+  check("batched services total matches the unbatched pass", batchedTotal.services.length === unbatched.services.length);
+  check(
+    "a stop shared across two different batches still becomes exactly one station, not two",
+    batchedTotal.stations.filter((s) => s.name === "Shared Stop").length === 1 && unbatched.stations.filter((s) => s.name === "Shared Stop").length === 1,
+  );
+  check("batched stations total matches the unbatched pass", batchedTotal.stations.length === unbatched.stations.length);
 }
 
 // --- keyboard: matcher, resolver, command execution, gating ---
@@ -2473,6 +2596,121 @@ function buildGrid() {
   check("stops are ordered by distance along the path, not input order", stops[0].distMeters < stops[1].distMeters && stops[1].distMeters < stops[2].distMeters);
   check("an unset dwell falls back to the default", stops[0].dwellMs === 20000 && stops[2].dwellMs === 20000);
   check("a station's own dwellSeconds overrides the default", stops[1].dwellMs === 5000);
+}
+
+// --- bearingDegrees / formatBearing ---
+{
+  check("due east is 90°", Math.abs(bearingDegrees([-115.2, 36.1], [-115.1, 36.1]) - 90) < 0.5);
+  check("due north is 0°", bearingDegrees([-115.2, 36.1], [-115.2, 36.2]) < 0.5);
+  check("due south wraps to ~180°", Math.abs(bearingDegrees([-115.2, 36.2], [-115.2, 36.1]) - 180) < 0.5);
+  check("formatBearing labels the nearest compass point", formatBearing(91) === "91° E");
+  check("formatBearing rounds degrees", formatBearing(44.6) === "45° NE");
+}
+
+// --- map/landmarks: static reference points ---
+{
+  check("every landmark has a real name and a valid [lng,lat] coord", LANDMARKS.every((l) => l.name.length > 0 && l.coord.length === 2 && Math.abs(l.coord[0]) <= 180 && Math.abs(l.coord[1]) <= 90));
+  const fc = landmarksFeatureCollection();
+  check("landmarksFeatureCollection carries one feature per landmark", fc.features.length === LANDMARKS.length);
+  check("each feature's name property round-trips", fc.features.every((f, i) => f.properties.name === LANDMARKS[i].name));
+}
+
+// --- servedWayIds: spatial-grid index stays correct across cell/segment boundaries ---
+{
+  // A long way (many points, spanning several of the index's ~300m grid
+  // cells) — a station near its FAR end must still be found. A naive index
+  // that only registered a segment in the cell of its first point would
+  // miss this (the exact bug shape a per-way bounding box or a
+  // single-cell-per-segment index could hide).
+  const longWay: Way = {
+    id: "long",
+    typeId: "road",
+    points: Array.from({ length: 40 }, (_, i) => [-115.2 + i * 0.002, 36.1] as LngLat),
+    geometry: "straight",
+    grade: "atGrade",
+    profile: defaultProfileFor("road"),
+  };
+  const farWay: Way = {
+    id: "far",
+    typeId: "road",
+    points: [[-114.0, 37.0], [-114.0, 37.01]],
+    geometry: "straight",
+    grade: "atGrade",
+    profile: defaultProfileFor("road"),
+  };
+  const nearFarEnd: LngLat = [longWay.points[39][0], 36.1];
+  const served = servedWayIds(nearFarEnd, [longWay, farWay], 50);
+  check("a station near a long way's far end is still found", served.includes("long"));
+  check("a way many degrees away is correctly excluded", !served.includes("far"));
+  check("a coordinate with nothing nearby returns no matches", servedWayIds([-110, 40], [longWay, farWay], 50).length === 0);
+}
+
+// --- snap: shares servedWayIds' spatial grid — same boundary-correctness
+// requirement, since a naive per-way-bbox or single-cell index would miss a
+// coordinate near a long way's far end. ---
+{
+  const longWay: Way = {
+    id: "long",
+    typeId: "road",
+    points: Array.from({ length: 40 }, (_, i) => [-115.2 + i * 0.002, 36.1] as LngLat),
+    geometry: "straight",
+    grade: "atGrade",
+    profile: defaultProfileFor("road"),
+  };
+  const farWay: Way = {
+    id: "far",
+    typeId: "road",
+    points: [[-114.0, 37.0], [-114.0, 37.01]],
+    geometry: "straight",
+    grade: "atGrade",
+    profile: defaultProfileFor("road"),
+  };
+  const nearFarEnd: LngLat = [longWay.points[39][0], 36.1];
+  const hit = snap([longWay, farWay], nearFarEnd, 50);
+  check("snap finds the long way from a coordinate near its far end", hit?.wayId === "long");
+  check("snap's t lands at the far end of the path, not the near end", (hit?.t ?? 0) > 0.9);
+  check("snap finds nothing for a coordinate with no way nearby", snap([longWay, farWay], [-110, 40], 50) === null);
+}
+
+// --- exportScale: niceScaleMeters / formatScaleMeters ---
+{
+  check("rounds down to the nearest 1/2/5 step", niceScaleMeters(347) === 200);
+  check("picks an exact nice number unchanged", niceScaleMeters(500) === 500);
+  check("works across a magnitude boundary", niceScaleMeters(950) === 500);
+  check("formatScaleMeters stays in meters under 1km", formatScaleMeters(500) === "500 m");
+  check("formatScaleMeters switches to km at 1000", formatScaleMeters(2000) === "2 km");
+}
+
+// --- store: straightenWay ---
+{
+  fresh();
+  const w = store.getState().beginWay("road", "straight");
+  store.getState().addWayPoint(w, [-115.2, 36.1]);
+  store.getState().addWayPoint(w, [-115.17, 36.13]); // a wobble off the straight line
+  store.getState().addWayPoint(w, [-115.1, 36.1]);
+  store.getState().finishWay();
+  store.getState().straightenWay(w);
+  const straightened = store.getState().system.ways.find((way) => way.id === w)!;
+  check("straighten drops the non-junction intermediate point", straightened.points.length === 2);
+  check("straighten keeps the original endpoints", straightened.points[0][0] === -115.2 && straightened.points[1][0] === -115.1);
+
+  // A junction at the wobble point must survive straightening — the other
+  // way's coincident control point can't be silently orphaned.
+  fresh();
+  const wB = store.getState().beginWay("road", "straight");
+  store.getState().addWayPoint(wB, [-115.2, 36.1]);
+  store.getState().addWayPoint(wB, [-115.17, 36.13]);
+  store.getState().addWayPoint(wB, [-115.1, 36.1]);
+  store.getState().finishWay();
+  const wC = store.getState().beginWay("road", "straight");
+  store.getState().addWayPoint(wC, [-115.17, 36.13]);
+  store.getState().addWayPoint(wC, [-115.17, 36.2]);
+  store.getState().finishWay();
+  store.getState().joinWayPointToWay(wC, 0, wB, [-115.17, 36.13]);
+  store.getState().straightenWay(wB);
+  const guarded = store.getState().system.ways.find((way) => way.id === wB)!;
+  check("straighten keeps a point that's a real junction", guarded.points.length === 3);
+  check("the junction node is still intact after straightening", store.getState().system.nodes.some((n) => n.refs.some((r) => r.wayId === wB) && n.refs.some((r) => r.wayId === wC)));
 }
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);

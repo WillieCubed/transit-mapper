@@ -51,6 +51,7 @@ export const SRC_LANE_ARROWS = "tm-lane-arrows";
 export const SRC_JUNCTIONS = "tm-junctions";
 export const SRC_CONNECTORS = "tm-connectors";
 export const SRC_WAY_LABELS = "tm-way-labels";
+export const SRC_LANDMARKS = "tm-landmarks";
 
 export const LYR_WAYS_SOLID = "tm-ways-solid";
 export const LYR_WAYS_DASHED = "tm-ways-dashed";
@@ -87,6 +88,8 @@ export const LYR_JUNCTIONS = "tm-junctions";
 export const LYR_JUNCTION_SELECTED = "tm-junction-selected";
 export const LYR_CONNECTORS = "tm-connectors";
 export const LYR_WAY_LABELS = "tm-way-labels";
+export const LYR_LANDMARKS = "tm-landmarks";
+export const LYR_LANDMARK_LABELS = "tm-landmark-labels";
 
 // Lane-level street rendering only exists at zooms where a lane is at least
 // a few pixels wide; below this the Infrastructure view keeps its cheap
@@ -185,6 +188,11 @@ export function buildFeatures(
   // facilities hidden, capacity collapsed to one line) — only Infrastructure
   // wants the physical-planning detail.
   const network = view.viewMode !== "infrastructure";
+  // Built once, unconditionally (same order as work this function already
+  // does unconditionally elsewhere) — reused everywhere below that used to
+  // do a fresh `system.ways.find(...)` scan per lookup: the laneDetail
+  // junction pass, the wayLabels loop, and the handle-ways loop.
+  const waysById = new Map(system.ways.map((w) => [w.id, w]));
 
   // services per way, in stable (creation) order — pre-filtered by visible
   // mode. Deduplicated across a service's own patterns: two branches sharing
@@ -297,7 +305,6 @@ export function buildFeatures(
   const connectorFeatures: Feature<LineString>[] = [];
   let wayTrims: WayTrims = new Map();
   if (!network && view.laneDetail === true) {
-    const waysById = new Map(system.ways.map((w) => [w.id, w]));
     const laneNodes: { node: TransitSystem["nodes"][number]; g: JunctionGeometry }[] = [];
     for (const node of system.nodes) {
       const relevant = node.refs.some((r) => {
@@ -403,11 +410,17 @@ export function buildFeatures(
   }
 
   const visibleWays = system.ways.filter((w) => view.visibleWayTypes.has(w.typeId));
-  const visibleServices = system.services.filter((sv) => view.visibleModes.has(sv.modeId));
   const stations: Feature<Point>[] = system.stations.map((s) => {
-    const nearWays = new Set(servedWayIds(s.coord, visibleWays, INTERCHANGE_METERS));
-    const servingServices = visibleServices.filter((sv) => serviceWayIds(sv).some((w) => nearWays.has(w)));
-    const anchorServices = s.anchor ? visibleServices.filter((sv) => serviceWayIds(sv).includes(s.anchor!.wayId)) : [];
+    // `byWay` already maps a way to the (visible-mode) services riding it —
+    // built once above for the way-rendering loop, so reuse it here instead
+    // of re-deriving each service's way ids per station: on a large GTFS
+    // import (thousands of stations) that recomputation showed up as real,
+    // measured main-thread time, unlike this Map-lookup version.
+    const nearWays = servedWayIds(s.coord, visibleWays, INTERCHANGE_METERS);
+    const servingServiceSet = new Set<Service>();
+    for (const wid of nearWays) for (const sv of byWay.get(wid) ?? []) servingServiceSet.add(sv);
+    const servingServices = [...servingServiceSet];
+    const anchorServices = s.anchor ? (byWay.get(s.anchor.wayId) ?? []) : [];
     const color = anchorServices[0]?.color ?? servingServices[0]?.color ?? NEUTRAL_STATION;
     return {
       type: "Feature",
@@ -427,7 +440,7 @@ export function buildFeatures(
   // dragging it extends the way with a new point instead of moving it in place.
   const handles: Feature<Point>[] = [];
   for (const wid of handleWayIds) {
-    const way = system.ways.find((w) => w.id === wid);
+    const way = waysById.get(wid);
     way?.points.forEach((p, i) => {
       const endpoint = i === 0 || i === way.points.length - 1;
       handles.push({ type: "Feature", properties: { wayId: wid, index: i, endpoint, icon: HANDLE_ICON }, geometry: { type: "Point", coordinates: p } });
@@ -504,7 +517,7 @@ export function buildFeatures(
     for (const nw of system.namedWays) {
       if (!nw.name) continue;
       for (const wid of nw.wayIds) {
-        const w = system.ways.find((x) => x.id === wid);
+        const w = waysById.get(wid);
         if (!w || !view.visibleWayTypes.has(w.typeId)) continue;
         const path = resolveWayPath(w);
         if (path.length < 2) continue;
@@ -552,11 +565,37 @@ export function buildFeatures(
 }
 
 export const LAYER_SPECS: LayerSpecification[] = [
-  // Paint order, bottom-up: the lane-detail STREET SURFACE first (junction
-  // fills + lane asphalt + markings — it's the ground), then station/complex
-  // footprints and platforms ON TOP of it (a station area overlays the road
-  // it straddles — painting streets later buried footprints, the "station
-  // boundaries are invisible" bug), then ways/services/stations above those.
+  // Paint order, bottom-up: reference landmarks first (fixed context, not
+  // system data — must sit under everything the user actually draws), then
+  // the lane-detail STREET SURFACE (junction fills + lane asphalt +
+  // markings — it's the ground), then station/complex footprints and
+  // platforms ON TOP of it (a station area overlays the road it straddles —
+  // painting streets later buried footprints, the "station boundaries are
+  // invisible" bug), then ways/services/stations above those.
+  {
+    // Hand-placed reference points (the Strip, UNLV, downtown, the airport,
+    // …) — static context, not user data (see map/landmarks.ts). Muted and
+    // small so a real drawn system always reads as the foreground.
+    id: LYR_LANDMARKS,
+    type: "circle",
+    source: SRC_LANDMARKS,
+    paint: { "circle-radius": 3, "circle-color": "#9a9a92", "circle-opacity": 0.7 },
+  },
+  {
+    id: LYR_LANDMARK_LABELS,
+    type: "symbol",
+    source: SRC_LANDMARKS,
+    layout: {
+      "text-field": ["get", "name"],
+      "text-font": ["literal", ["Noto Sans Regular"]],
+      "text-size": 11,
+      "text-variable-anchor": ["top", "bottom", "right", "left"],
+      "text-radial-offset": 0.6,
+      "text-allow-overlap": false,
+      "text-optional": true,
+    },
+    paint: { "text-color": "#9a9a92", "text-halo-color": "#ffffff", "text-halo-width": 1.2 },
+  },
   {
     // Junction footprints: the shared asphalt where lane-detailed ways meet.
     // Painted BENEATH the lane surfaces so each arm's trimmed carriageway

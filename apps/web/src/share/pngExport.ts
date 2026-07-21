@@ -4,6 +4,7 @@ import type { TransitSystem } from "@transitmapper/core/model/system";
 import type { ViewOptions } from "../map/layers";
 import { getMap } from "../map/mapRef";
 import { legendEntriesFor, type LegendEntry } from "./exportLegend";
+import { scaleBarSpec } from "./exportScale";
 
 const INK = "#191a17";
 const PAD = 20; // export-canvas padding, independent of the app's 4px UI grid (this is print/image space)
@@ -25,11 +26,59 @@ function downloadDataUrl(url: string, filename: string): void {
   a.remove();
 }
 
-/** Draws the title (top-left) and a line-color legend (bottom-left) onto a
- *  copy of the map's rendered canvas — the same visual treatment an MTA-style
+function drawScaleBar(ctx: CanvasRenderingContext2D, map: MLMap, out: HTMLCanvasElement, scale: number): void {
+  const maxWidthPx = Math.min(140, (out.width / scale) * 0.3);
+  const { widthPx, label } = scaleBarSpec(map, maxWidthPx);
+  const w = widthPx * scale;
+  const x0 = out.width - PAD * scale - w;
+  const y = out.height - PAD * scale - 6 * scale;
+  const tick = 5 * scale;
+  ctx.save();
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 2 * scale;
+  ctx.beginPath();
+  ctx.moveTo(x0, y);
+  ctx.lineTo(x0 + w, y);
+  ctx.moveTo(x0, y - tick);
+  ctx.lineTo(x0, y + tick);
+  ctx.moveTo(x0 + w, y - tick);
+  ctx.lineTo(x0 + w, y + tick);
+  ctx.stroke();
+  ctx.font = `600 ${11 * scale}px system-ui, sans-serif`;
+  ctx.fillStyle = INK;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText(label, x0 + w / 2, y - tick - 4 * scale);
+  ctx.restore();
+}
+
+function drawNorthArrow(ctx: CanvasRenderingContext2D, map: MLMap, out: HTMLCanvasElement, scale: number): void {
+  const cx = out.width - PAD * scale - 10 * scale;
+  const cy = PAD * scale + 18 * scale;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate((-map.getBearing() * Math.PI) / 180);
+  ctx.fillStyle = INK;
+  ctx.beginPath();
+  ctx.moveTo(0, -12 * scale);
+  ctx.lineTo(6 * scale, 8 * scale);
+  ctx.lineTo(0, 3.5 * scale);
+  ctx.lineTo(-6 * scale, 8 * scale);
+  ctx.closePath();
+  ctx.fill();
+  ctx.font = `700 ${11 * scale}px system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText("N", 0, 22 * scale);
+  ctx.restore();
+}
+
+/** Draws the title (top-left), a line-color legend (bottom-left), a north
+ *  arrow (top-right), and a scale bar (bottom-right) onto a copy of the
+ *  map's rendered canvas — the same visual treatment an MTA-style
  *  wayfinding map uses, composited at export time so the live preview stays a
  *  cheap HTML overlay (see ExportPreviewMap) instead of redrawing on every frame. */
-function composeCanvas(src: HTMLCanvasElement, opts: ComposeOptions): HTMLCanvasElement {
+function composeCanvas(src: HTMLCanvasElement, map: MLMap, opts: ComposeOptions): HTMLCanvasElement {
   const out = document.createElement("canvas");
   out.width = src.width;
   out.height = src.height;
@@ -68,6 +117,9 @@ function composeCanvas(src: HTMLCanvasElement, opts: ComposeOptions): HTMLCanvas
     });
   }
 
+  drawNorthArrow(ctx, map, out, scale);
+  drawScaleBar(ctx, map, out, scale);
+
   return out;
 }
 
@@ -75,7 +127,7 @@ function composeCanvas(src: HTMLCanvasElement, opts: ComposeOptions): HTMLCanvas
  *  instance) as a PNG, with the title/legend composited on top. */
 export function exportPngFromMap(map: MLMap, opts: ComposeOptions, filename = "transit-system.png"): void {
   map.once("idle", () => {
-    downloadDataUrl(composeCanvas(map.getCanvas(), opts).toDataURL("image/png"), filename);
+    downloadDataUrl(composeCanvas(map.getCanvas(), map, opts).toDataURL("image/png"), filename);
   });
   map.triggerRepaint();
 }
@@ -92,7 +144,7 @@ export function exportFullSystemPng(system: TransitSystem, view: ViewOptions, fi
   if (bounds) map.fitBounds(bounds, { padding: 56, animate: false });
   map.once("idle", () => {
     downloadDataUrl(
-      composeCanvas(map.getCanvas(), { title: system.name || "Transit system", legend: legendEntriesFor(system, view) }).toDataURL(
+      composeCanvas(map.getCanvas(), map, { title: system.name || "Transit system", legend: legendEntriesFor(system, view) }).toDataURL(
         "image/png",
       ),
       filename,

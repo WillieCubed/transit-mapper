@@ -43,10 +43,21 @@ const MIN_EDGE_METERS = 10; // numerical floor only, not a stylistic minimum
 function buildDiagramSystem(system: TransitSystem): TransitSystem {
   if (system.ways.length === 0) return system;
 
-  const nodeKeyForWayPoint = (wayId: string, index: number): string | null => {
-    const node = system.nodes.find((n) => n.refs.some((r) => r.wayId === wayId && r.pointIndex === index));
-    return node ? `node:${node.id}` : null;
-  };
+  // One pass over system.nodes instead of scanning it once per way to find
+  // junction indices AND again per vertex to resolve each one's node key —
+  // memoized by system reference (computeDiagramSystem above), so this only
+  // reruns once per actual content edit while Diagram view is active, but
+  // each edit still paid the double O(ways × nodes) scan this replaces.
+  const nodeKeyByWayPoint = new Map<string, string>(); // "wayId:index" -> "node:<id>"
+  const nodeIndicesByWay = new Map<string, number[]>();
+  for (const node of system.nodes) {
+    for (const ref of node.refs) {
+      nodeKeyByWayPoint.set(`${ref.wayId}:${ref.pointIndex}`, `node:${node.id}`);
+      const list = nodeIndicesByWay.get(ref.wayId);
+      if (list) list.push(ref.pointIndex);
+      else nodeIndicesByWay.set(ref.wayId, [ref.pointIndex]);
+    }
+  }
 
   // Every way's own ordered vertex list: its two ends, plus any interior
   // point that's a real junction with another way (see joinWayPointToWay —
@@ -58,16 +69,12 @@ function buildDiagramSystem(system: TransitSystem): TransitSystem {
   for (const way of system.ways) {
     if (way.points.length < 2) continue;
     const indices = new Set<number>([0, way.points.length - 1]);
-    for (const node of system.nodes) {
-      for (const ref of node.refs) {
-        if (ref.wayId === way.id && ref.pointIndex > 0 && ref.pointIndex < way.points.length - 1) {
-          indices.add(ref.pointIndex);
-        }
-      }
+    for (const index of nodeIndicesByWay.get(way.id) ?? []) {
+      if (index > 0 && index < way.points.length - 1) indices.add(index);
     }
     const vertices = [...indices]
       .sort((a, b) => a - b)
-      .map((index) => ({ index, key: nodeKeyForWayPoint(way.id, index) ?? `end:${way.id}:${index}` }));
+      .map((index) => ({ index, key: nodeKeyByWayPoint.get(`${way.id}:${index}`) ?? `end:${way.id}:${index}` }));
     wayVertices.set(way.id, vertices);
     for (const v of vertices) {
       if (!vertexSeed.has(v.key)) vertexSeed.set(v.key, way.points[v.index]);

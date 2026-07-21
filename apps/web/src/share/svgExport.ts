@@ -6,6 +6,7 @@ import { getMap } from "../map/mapRef";
 import { systemBounds } from "@transitmapper/core/model/geo";
 import type { LngLat, TransitSystem } from "@transitmapper/core/model/system";
 import { legendEntriesFor, type LegendEntry } from "./exportLegend";
+import { scaleBarSpec } from "./exportScale";
 
 const INK = "#191a17";
 const PAD = 20;
@@ -51,6 +52,34 @@ function legendMarkup(legend: LegendEntry[], width: number, height: number): str
     })
     .join("");
   return `<rect x="0" y="${top.toFixed(1)}" width="${panelW.toFixed(0)}" height="${panelH}" fill="rgba(255,255,255,0.88)"/>${rows}`;
+}
+
+function scaleBarMarkup(map: MLMap, width: number, height: number): string {
+  const maxWidthPx = Math.min(140, width * 0.3);
+  const { widthPx, label } = scaleBarSpec(map, maxWidthPx);
+  const x0 = width - PAD - widthPx;
+  const y = height - PAD - 6;
+  const tick = 5;
+  return (
+    `<g stroke="${INK}" stroke-width="2">` +
+    `<line x1="${x0.toFixed(1)}" y1="${y}" x2="${(x0 + widthPx).toFixed(1)}" y2="${y}"/>` +
+    `<line x1="${x0.toFixed(1)}" y1="${y - tick}" x2="${x0.toFixed(1)}" y2="${(y + tick).toFixed(1)}"/>` +
+    `<line x1="${(x0 + widthPx).toFixed(1)}" y1="${y - tick}" x2="${(x0 + widthPx).toFixed(1)}" y2="${(y + tick).toFixed(1)}"/>` +
+    `</g>` +
+    `<text x="${(x0 + widthPx / 2).toFixed(1)}" y="${(y - tick - 4).toFixed(1)}" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" font-weight="600" fill="${INK}">${label}</text>`
+  );
+}
+
+function northArrowMarkup(map: MLMap, width: number): string {
+  const cx = width - PAD - 10;
+  const cy = PAD + 18;
+  const rotate = map.getBearing();
+  return (
+    `<g transform="rotate(${(-rotate).toFixed(1)} ${cx} ${cy})">` +
+    `<path d="M${cx},${cy - 12} L${cx + 6},${cy + 8} L${cx},${cy + 3.5} L${cx - 6},${cy + 8} Z" fill="${INK}"/>` +
+    `<text x="${cx}" y="${cy + 22}" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" font-weight="700" fill="${INK}">N</text>` +
+    `</g>`
+  );
 }
 
 function escapeXml(s: string): string {
@@ -123,6 +152,8 @@ export function svgMarkup(system: TransitSystem, view: ViewOptions, map: MLMap, 
 
   parts.push(titleMarkup(opts.title, width));
   parts.push(legendMarkup(opts.legend, width, height));
+  parts.push(northArrowMarkup(map, width));
+  parts.push(scaleBarMarkup(map, width, height));
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#ffffff"/>${parts.join("")}</svg>`;
 }

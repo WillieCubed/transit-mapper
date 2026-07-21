@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { MapCanvas } from "./map/MapCanvas";
 import { getMap } from "./map/mapRef";
 import { useEditor, useEditorStore } from "./editor/EditorProvider";
@@ -8,6 +8,7 @@ import { getActiveId, listLibrary, loadSystemById, migrateLegacySingleSlot, save
 import { ExportDialog } from "./ui/ExportDialog";
 import { Icon } from "./ui/Icon";
 import { ImportDialog } from "./ui/ImportDialog";
+import { ImportProgressPill } from "./ui/ImportProgressPill";
 import { Inspector } from "./ui/Inspector";
 import { LinesPanel } from "./ui/LinesPanel";
 import { ShareDialog } from "./ui/ShareDialog";
@@ -20,6 +21,13 @@ import { useUi } from "./ui/UiProvider";
 import { useView } from "./ui/ViewProvider";
 import { Workbench } from "./ui/Workbench";
 import "./ui/app.css";
+
+// Lazy-loaded: pulls in fflate + the GTFS parsing pipeline (packages/core's
+// model/gtfsImport.ts), used nowhere else in the app's eager import graph —
+// no reason to ship that in the main bundle for the common case where this
+// dialog is never opened. App already renders it conditionally below, the
+// shape React.lazy wants.
+const GtfsImportDialog = lazy(() => import("./ui/GtfsImportDialog").then((m) => ({ default: m.GtfsImportDialog })));
 
 const SHARE_PREFIX = "/s/";
 
@@ -121,6 +129,7 @@ export function App() {
             primaryToolbar={<TopBarActions />}
             viewSwitcher={<ViewSwitch />}
             modeToolbar={<Toolbar />}
+            importStatus={<ImportProgressPill />}
           />
         </div>
       )}
@@ -132,6 +141,11 @@ export function App() {
       )}
       {shortcutsOpen && <ShortcutsDialog onClose={closeShortcuts} />}
       {activeDialog === "import" && <ImportDialog onClose={closeDialog} />}
+      {activeDialog === "gtfs" && (
+        <Suspense fallback={null}>
+          <GtfsImportDialog onClose={closeDialog} />
+        </Suspense>
+      )}
       {activeDialog === "export" && <ExportDialog onClose={closeDialog} />}
       {activeDialog === "share" && <ShareDialog onClose={closeDialog} />}
       {activeDialog === "systems" && <SystemsDialog onClose={closeDialog} />}

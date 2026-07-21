@@ -215,6 +215,11 @@ export interface EditorState {
    *  and `targetWayId`: splices a genuine control point into the target way
    *  (or reuses one already there) and links both as one Node. */
   joinWayPointToWay: (wayId: string, index: number, targetWayId: string, coord: LngLat) => void;
+  /** Drops every intermediate control point that isn't a junction, leaving a
+   *  straight line between the way's endpoints (junction points are kept in
+   *  place so connected ways don't desync). Cleanup for a wobbly freehand or
+   *  imported alignment. */
+  straightenWay: (wayId: string) => void;
   finishWay: () => void;
   setWayGeometry: (id: string, geometry: LineGeometry) => void;
   setWayGrade: (id: string, grade: Grade) => void;
@@ -230,6 +235,11 @@ export interface EditorState {
    *  no service is auto-created, since imported streets/rail are real physical
    *  context to draw services over, not a route in themselves. */
   importWays: (ways: Way[]) => void;
+  /** Append a GTFS import's ways/services/stations (P4 follow-on: RTC's real
+   *  system as a comparison baseline) — unlike importWays, this DOES create
+   *  services/stations, since a GTFS feed is already a real rideable
+   *  system, not bare infrastructure to draw over. */
+  importGtfs: (pieces: { ways: Way[]; services: Service[]; stations: Station[] }) => void;
 
   // cross-sections (lane-level editing — see model/profile.ts)
   /** Replace a way's whole cross-section (the lane editor's setter). */
@@ -409,6 +419,36 @@ function touch(system: TransitSystem): TransitSystem {
   return { ...system, updatedAt: Date.now() };
 }
 
+// Field-wise content equality for commitHistoryCheckpoint's no-op detection.
+// Every top-level TransitSystem field keeps its exact reference across a
+// mutation that doesn't touch it (the immutable-replacement convention this
+// whole store relies on), so a field whose reference is unchanged is
+// guaranteed content-unchanged too — only fields with a NEW reference need
+// an actual JSON comparison. For a typical drag gesture that's `ways` (and
+// sometimes `stations`) out of 16 fields, instead of serializing the whole
+// system (which used to run on every single gesture end, not just reverts —
+// confirmed live as the single highest-frequency expensive call in the
+// editing loop).
+//
+// Iterates the UNION of before's and after's own keys, not just before's —
+// TransitSystem.description is optional, and createEmptySystem() never sets
+// it while the deserialize path always does (even to `undefined`), so a
+// `before` snapshot from a fresh system and an `after` with description set
+// have genuinely different key sets. Checking only `before`'s keys would
+// silently skip comparing a field that only exists on `after`, treating a
+// real change as a no-op revert (confirmed reachable, not just theoretical).
+function systemContentEqual(before: TransitSystem, after: TransitSystem): boolean {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]) as Set<keyof TransitSystem>;
+  for (const key of keys) {
+    if (key === "updatedAt") continue;
+    const b = before[key];
+    const a = after[key];
+    if (b === a) continue;
+    if (JSON.stringify(b) !== JSON.stringify(a)) return false;
+  }
+  return true;
+}
+
 // Recompute the coords of every station riding `wayId`, so they follow the
 // way when its control points move.
 function reanchorStations(system: TransitSystem, wayId: string): Station[] {
@@ -423,6 +463,63 @@ function updateWayPoints(system: TransitSystem, wayId: string, fn: (points: LngL
   const ways = system.ways.map((w) => (w.id === wayId ? { ...w, points: fn(w.points) } : w));
   const withWays = { ...system, ways };
   return { ...withWays, stations: reanchorStations(withWays, wayId), updatedAt: Date.now() };
+}
+
+// Same transform as calling updateWayPoints once per way in `wayIds`, but in
+// ONE pass over `ways` and ONE pass over `stations` instead of one of each
+// per way — a multi-way group-drag calling updateWayPoints per selected way
+// costs O(k × (totalWays + totalStations)) per animation frame; this is
+// O(totalWays + totalStations) regardless of k. Each way's transform is
+// independent and each station only ever reanchors off its own anchor way,
+// so one combined pass produces byte-identical output to k sequential ones.
+function updateWayPointsBatch(system: TransitSystem, wayIds: Set<string>, fn: (points: LngLat[]) => LngLat[]): TransitSystem {
+  if (wayIds.size === 0) return system;
+  const changedWays = new Map<string, Way>();
+  const ways = system.ways.map((w) => {
+    if (!wayIds.has(w.id)) return w;
+    const next = { ...w, points: fn(w.points) };
+    changedWays.set(w.id, next);
+    return next;
+  });
+  // Only allocate a new `stations` array when something actually reanchors —
+  // keeps the reference stable for a group of ways nothing is anchored to,
+  // which is what lets commitHistoryCheckpoint's reference-equality fast
+  // path skip comparing `stations` at all for that case.
+  let stationsChanged = false;
+  const stations = system.stations.map((s) => {
+    const anchor = s.anchor;
+    const way = anchor && changedWays.get(anchor.wayId);
+    if (!way || !anchor) return s;
+    const path = resolveWayPath(way);
+    if (path.length < 2) return s;
+    stationsChanged = true;
+    return { ...s, coord: pointAtT(path, anchor.t) };
+  });
+  return { ...system, ways, stations: stationsChanged ? stations : system.stations, updatedAt: Date.now() };
+}
+
+// Drop every intermediate point that isn't a junction (keeps refs.length >= 2
+// nodes intact), leaving a straight line — indices removed highest-first so
+// each shiftNodeRefsForDelete sees indices that haven't shifted yet.
+function straightenWay(system: TransitSystem, wayId: string): TransitSystem {
+  const way = system.ways.find((w) => w.id === wayId);
+  if (!way || way.points.length <= 2) return system;
+  const lastIndex = way.points.length - 1;
+  const junctionIndexes = new Set(
+    system.nodes.flatMap((n) => n.refs.filter((r) => r.wayId === wayId).map((r) => r.pointIndex)),
+  );
+  const removable = way.points
+    .map((_, i) => i)
+    .filter((i) => i !== 0 && i !== lastIndex && !junctionIndexes.has(i))
+    .sort((a, b) => b - a);
+  let next = system;
+  for (const index of removable) {
+    next = {
+      ...updateWayPoints(next, wayId, (pts) => pts.filter((_, i) => i !== index)),
+      nodes: shiftNodeRefsForDelete(next.nodes, wayId, index),
+    };
+  }
+  return next;
 }
 
 // Drop a way from every shared identity, and drop identities left empty.
@@ -900,10 +997,7 @@ function materializeRouteSpans(system: TransitSystem, spansIn: RouteSpan[]): { s
  */
 function nudgeSelection(system: TransitSystem, items: MultiSelectItem[], dx: number, dy: number): TransitSystem {
   const wayIds = new Set(items.filter((i) => i.kind === "way").map((i) => i.id));
-  let next = system;
-  for (const id of wayIds) {
-    next = updateWayPoints(next, id, (pts) => pts.map((p): LngLat => [p[0] + dx, p[1] + dy]));
-  }
+  let next = updateWayPointsBatch(system, wayIds, (pts) => pts.map((p): LngLat => [p[0] + dx, p[1] + dy]));
 
   const stationIds = new Set(items.filter((i) => i.kind === "station").map((i) => i.id));
   if (stationIds.size > 0) {
@@ -1036,9 +1130,10 @@ export function createEditorStore() {
       // A cancelled gesture (Escape) reverts by calling the same actions
       // again with the original values — same content, new object identity —
       // so a reference check alone can't tell "reverted" from "changed".
-      // updatedAt is excluded: every mutating action bumps it via touch(),
-      // so it always differs even when nothing else does.
-      if (JSON.stringify({ ...before, updatedAt: 0 }) === JSON.stringify({ ...after, updatedAt: 0 })) return;
+      // systemContentEqual excludes updatedAt (every mutating action bumps
+      // it via touch(), so it always differs even when nothing else does)
+      // and skips any field whose reference didn't change.
+      if (systemContentEqual(before, after)) return;
       past.push(before);
       if (past.length > HISTORY_LIMIT) past.shift();
       future = [];
@@ -1269,6 +1364,8 @@ export function createEditorStore() {
     joinWayPointToWay: (wayId, index, targetWayId, coord) =>
       set((s) => ({ system: joinWayPointToWay(s.system, wayId, index, targetWayId, coord) })),
 
+    straightenWay: (wayId) => set((s) => ({ system: straightenWay(s.system, wayId) })),
+
     finishWay: () => {
       const { activeWayId, addingPatternForServiceId } = get();
       if (!activeWayId) return;
@@ -1334,6 +1431,16 @@ export function createEditorStore() {
 
     importWays: (ways) =>
       set((s) => ({ system: touch({ ...s.system, ways: [...s.system.ways, ...ways] }) })),
+
+    importGtfs: (pieces) =>
+      set((s) => ({
+        system: touch({
+          ...s.system,
+          ways: [...s.system.ways, ...pieces.ways],
+          services: [...s.system.services, ...pieces.services],
+          stations: [...s.system.stations, ...pieces.stations],
+        }),
+      })),
 
     setWayProfile: (id, profile) =>
       set((s) => {
@@ -1499,7 +1606,7 @@ export function createEditorStore() {
             haversineMeters(keeper.points[keeper.points.length - 1], other.points[0]);
         const backHalf = sameDir ? other.profile : flipProfile(other.profile);
         const median = getComponent(s.system.medians, namedWayId);
-        const combined = combineProfiles(backHalf, keeper.profile, median?.widthM, median?.kindId);
+        const combined = combineProfiles(backHalf, keeper.profile, median?.widthM, median?.kindId, s.system.drivingSide);
 
         let system = removeWay(s.system, other.id);
         system = { ...system, ways: system.ways.map((w) => (w.id === keeper.id ? { ...w, profile: combined } : w)) };

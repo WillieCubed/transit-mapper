@@ -8,9 +8,9 @@ import { useView } from "./ViewProvider";
  * a new catalog entry appears here automatically, no UI change required.
  */
 export function LayersPopover() {
-  const { visibleModes, visibleWayTypes, toggleMode, toggleWayType, showAllModes, showAllWayTypes } = useView();
+  const { visibleModes, visibleWayTypes, toggleMode, toggleWayType, showAllModes, showAllWayTypes, showLandmarks, toggleLandmarks } = useView();
 
-  const anyHidden = visibleModes.size < MODE_ORDER.length || visibleWayTypes.size < WAY_TYPE_ORDER.length;
+  const anyHidden = visibleModes.size < MODE_ORDER.length || visibleWayTypes.size < WAY_TYPE_ORDER.length || !showLandmarks;
 
   return (
     <Popover trigger={<IconButton icon="layers" label="Layers" active={anyHidden} />}>
@@ -38,6 +38,15 @@ export function LayersPopover() {
               {WAY_TYPES[id].label}
             </label>
           ))}
+        </div>
+        <div className="lp-col">
+          <div className="lp-col-head">
+            <span className="panel-section-label" style={{ marginBottom: 0 }}>Reference</span>
+          </div>
+          <label className="lp-row">
+            <input type="checkbox" checked={showLandmarks} onChange={toggleLandmarks} />
+            Landmarks
+          </label>
         </div>
       </div>
     </Popover>

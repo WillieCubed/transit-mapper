@@ -901,7 +901,14 @@ export function attachInteractions(map: MLMap, store: EditorStore, opts: AttachI
   // not yet drawing, a ring over any open endpoint within snap range warns
   // that pressing there resumes/extends THAT way instead of starting a new
   // one (see startDraw's own nearestOpenEndpoint call, which this mirrors).
-  const onHoverMove = (ev: MapMouseEvent) => {
+  // Throttled like every drag handler in this file (rafThrottle, above) —
+  // unlike a drag, this fires on every raw mousemove regardless of whether
+  // a button is held (it drives the rubber-band preview and the "resume this
+  // way" endpoint ring), and its resume-endpoint branch below does an
+  // O(ways) scan (nearestOpenEndpoint) — at native mousemove frequency that
+  // ran far more often than the map could paint. A single rAF frame of
+  // latency on a hover affordance is imperceptible.
+  const onHoverMoveImpl = (ev: MapMouseEvent) => {
     const st = store.getState();
     if (st.tool === "way" && st.activeWayId) {
       const last = wayEndpoint(st.activeWayId, activeExtendAtStart);
@@ -925,6 +932,8 @@ export function attachInteractions(map: MLMap, store: EditorStore, opts: AttachI
       setEndpointHint(null);
     }
   };
+  const hoverThrottle = rafThrottle(onHoverMoveImpl);
+  const onHoverMove = (ev: MapMouseEvent) => hoverThrottle.call(ev);
 
   const placeOrSnapStation = (id: string, coord: LngLat) => {
     const ways = store.getState().system.ways;
@@ -1356,6 +1365,7 @@ export function attachInteractions(map: MLMap, store: EditorStore, opts: AttachI
   canvas.style.cursor = cursorFor();
 
   return () => {
+    hoverThrottle.cancel();
     map.off("mousedown", onMouseDown);
     map.off("mousemove", onHoverMove);
     map.off("click", onClick);

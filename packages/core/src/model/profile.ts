@@ -228,17 +228,29 @@ export function separateProfiles(profile: CrossSection, drivingSide: DrivingSide
 }
 
 /** Join two one-way carriageway profiles back into one two-way profile with
- *  a median between them. `backward` lanes come first (left half). Pass
- *  `medianWidthM`/`medianKindId` to restore a captured Median component
- *  (see model/system.ts) instead of falling back to the catalog default. */
-export function combineProfiles(backward: CrossSection, forward: CrossSection, medianWidthM?: number, medianKindId?: string): CrossSection {
+ *  a median between them. Physical left/right half placement mirrors
+ *  separateProfiles's own drivingSide convention (right-hand traffic: left
+ *  half is backward, right half is forward; left-hand traffic swaps that) —
+ *  without `drivingSide` matching the side the halves were originally split
+ *  under, a separate-then-combine round trip on a left-hand-traffic system
+ *  would silently swap which physical side each half's lanes render on. Pass
+ *  `medianWidthM`/`medianKindId` to restore a captured Median component (see
+ *  model/system.ts) instead of falling back to the catalog default. */
+export function combineProfiles(
+  backward: CrossSection,
+  forward: CrossSection,
+  medianWidthM?: number,
+  medianKindId?: string,
+  drivingSide: DrivingSide = "right",
+): CrossSection {
   const median: LaneSpec = {
     id: shortId(),
     kindId: medianKindId ?? "median",
     widthM: medianWidthM ?? LANE_KINDS.median.defaultWidthM,
     direction: "none",
   };
-  return { lanes: [...backward.lanes.map((l) => ({ ...l })), median, ...forward.lanes.map((l) => ({ ...l }))] };
+  const [leftHalf, rightHalf] = drivingSide === "left" ? [forward, backward] : [backward, forward];
+  return { lanes: [...leftHalf.lanes.map((l) => ({ ...l })), median, ...rightHalf.lanes.map((l) => ({ ...l }))] };
 }
 
 /** A deep copy of a profile with FRESH lane ids — for a new way that starts

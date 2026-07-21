@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useEditor } from "../editor/EditorProvider";
 import { getMap } from "../map/mapRef";
 import { IMPORT_CATEGORY_LABELS, IMPORT_CATEGORY_ORDER, importOsmWays, type ImportCategory } from "@transitmapper/core/model/import";
@@ -28,8 +28,25 @@ export function ImportDialog({ onClose }: ImportDialogProps) {
       return next;
     });
 
-  const zoom = getMap()?.getZoom() ?? 0;
+  // The modal's own backdrop blocks the map behind it, so the zoom that
+  // determines zoomedInEnough can't change on its own while this is open —
+  // without a way to fix that from inside the dialog, a disabled button here
+  // is a dead end (close, zoom, reopen, hope it's enough). Tracked in state
+  // (not read fresh each render) so the map's own "zoomend" pushes a re-check.
+  const [zoom, setZoom] = useState(() => getMap()?.getZoom() ?? 0);
   const zoomedInEnough = zoom >= MIN_IMPORT_ZOOM;
+
+  useEffect(() => {
+    const map = getMap();
+    if (!map) return;
+    const onZoom = () => setZoom(map.getZoom());
+    map.on("zoomend", onZoom);
+    return () => {
+      map.off("zoomend", onZoom);
+    };
+  }, []);
+
+  const zoomIn = () => getMap()?.zoomTo(MIN_IMPORT_ZOOM, { duration: 300 });
 
   const run = async () => {
     const map = getMap();
@@ -86,8 +103,11 @@ export function ImportDialog({ onClose }: ImportDialogProps) {
       </div>
 
       {!zoomedInEnough && (
-        <p className="error-text" style={{ marginTop: 8 }}>
-          Zoom in closer to import — the current view is too large for a responsible query.
+        <p className="error-text" style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+          This area's too big to pull streets for all at once.
+          <button type="button" className="link-btn" onClick={zoomIn}>
+            Zoom in
+          </button>
         </p>
       )}
 

@@ -1,4 +1,4 @@
-import { useEditor } from "../editor/EditorProvider";
+import { useEditorStore } from "../editor/EditorProvider";
 import { exportFullSystemPng } from "../share/pngExport";
 import { exportFullSystemSvg } from "../share/svgExport";
 import { DropdownMenu, DropdownMenuItem } from "./DropdownMenu";
@@ -11,11 +11,16 @@ import { useView } from "./ViewProvider";
  *  opens a quick menu for the common case — export the current view as-is,
  *  no dialog. */
 export function ExportSplitButton() {
-  const system = useEditor((s) => s.system);
+  // Always mounted (top-bar primary toolbar) — read `system` imperatively
+  // instead of subscribing, same reasoning as FileMenu: it's only used
+  // inside quickExport's click handler, never rendered, so subscribing would
+  // just re-render this on every store mutation for no visible benefit.
+  const store = useEditorStore();
   const { viewMode, visibleModes, visibleWayTypes } = useView();
   const { openDialog } = useUi();
 
   const quickExport = (format: "png" | "svg") => {
+    const system = store.getState().system;
     const filename = `${system.name || "transit-system"}.${format}`;
     const view = { viewMode, visibleModes, visibleWayTypes };
     // Quick export still shows the whole system (fits bounds, titles, and

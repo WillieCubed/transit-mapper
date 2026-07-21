@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import { useEditor } from "../editor/EditorProvider";
 import type { Selection } from "../editor/store";
 import { FACILITY_TYPES, MODES, WAY_TYPE_ORDER, WAY_TYPES } from "@transitmapper/core/model/catalog";
@@ -5,6 +6,38 @@ import { useListboxKeyboardNav } from "./useListboxKeyboardNav";
 
 function rowKey(kind: NonNullable<Selection>["kind"], id: string): string {
   return `${kind}:${id}`;
+}
+
+// A hand-drawn system has dozens of objects; an imported GTFS feed can have
+// thousands (RTC's real network alone is ~3800 stops) — rendering every one
+// as its own DOM row is what froze the tab on import (React has to build
+// and commit every element even for ones that scroll off-screen; CSS alone
+// can't skip that part). Past this many in one section, only the first
+// LIST_CAP render, with a button to reveal the rest on demand.
+const LIST_CAP = 150;
+
+interface CappedItems<T> {
+  visible: T[];
+  hiddenCount: number;
+}
+
+function capped<T>(items: T[], expanded: boolean): CappedItems<T> {
+  if (expanded || items.length <= LIST_CAP) return { visible: items, hiddenCount: 0 };
+  return { visible: items.slice(0, LIST_CAP), hiddenCount: items.length - LIST_CAP };
+}
+
+interface ShowMoreRowProps {
+  hiddenCount: number;
+  onClick: () => void;
+}
+
+function ShowMoreRow({ hiddenCount, onClick }: ShowMoreRowProps) {
+  if (hiddenCount === 0) return null;
+  return (
+    <button type="button" className="link-btn" style={{ display: "block", margin: "4px 8px" }} onClick={onClick}>
+      Show {hiddenCount} more…
+    </button>
+  );
 }
 
 /** The system's objects grouped by the model: services, infrastructure (by
@@ -25,10 +58,48 @@ export function LinesPanel() {
   const selection = useEditor((s) => s.selection);
   const selectAndFocus = useEditor((s) => s.selectAndFocus);
   const { containerRef, onKeyDown } = useListboxKeyboardNav<HTMLDivElement>();
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const expandSection = (key: string) => setExpanded((prev) => new Set(prev).add(key));
 
-  const waysByType = WAY_TYPE_ORDER.map((typeId) => ({ typeId, ways: ways.filter((w) => w.typeId === typeId) })).filter(
-    (g) => g.ways.length > 0,
-  );
+  // Memoized on the source array + this section's own expanded flag — NOT
+  // on `selection` (this component re-renders on every row click) or on the
+  // raw `expanded` Set (a fresh Set reference every expandSection call would
+  // invalidate every section's memo, not just the one that changed). Once
+  // "Show more" is clicked on a real GTFS import, `waysShown.visible` can be
+  // the full multi-thousand-entry array — without this, waysByType's filter
+  // re-ran that full scan on every unrelated selection click.
+  const servicesExpanded = expanded.has("services");
+  const waysExpanded = expanded.has("ways");
+  const stationsExpanded = expanded.has("stations");
+  const facilitiesExpanded = expanded.has("facilities");
+  const groupsExpanded = expanded.has("groups");
+
+  const servicesShown = useMemo(() => capped(services, servicesExpanded), [services, servicesExpanded]);
+  const stationsShown = useMemo(() => capped(stations, stationsExpanded), [stations, stationsExpanded]);
+  const facilitiesShown = useMemo(() => capped(facilities, facilitiesExpanded), [facilities, facilitiesExpanded]);
+  const groupsShown = useMemo(() => capped(groups, groupsExpanded), [groups, groupsExpanded]);
+
+  // Grouped by type BEFORE capping, not after — capping the flat `ways` array
+  // first (as this used to) can push an entire type past the cutoff, hiding
+  // its section label with no indication that type exists at all. Capping
+  // per-group instead (in WAY_TYPE_ORDER) guarantees every type present gets
+  // its label rendered as long as any of its share of the LIST_CAP budget
+  // survives.
+  const waysByType = useMemo(() => {
+    const grouped = WAY_TYPE_ORDER.map((typeId) => ({ typeId, ways: ways.filter((w) => w.typeId === typeId) })).filter(
+      (g) => g.ways.length > 0,
+    );
+    if (waysExpanded) return grouped;
+    let remaining = LIST_CAP;
+    const out: typeof grouped = [];
+    for (const g of grouped) {
+      if (remaining <= 0) break;
+      out.push({ typeId: g.typeId, ways: g.ways.slice(0, remaining) });
+      remaining -= Math.min(remaining, g.ways.length);
+    }
+    return out;
+  }, [ways, waysExpanded]);
+  const waysHiddenCount = ways.length - waysByType.reduce((sum, g) => sum + g.ways.length, 0);
 
   // Roving tabindex: Tab should land on exactly one row — whichever is
   // currently selected, or the very first row overall if nothing here is.
@@ -46,7 +117,7 @@ export function LinesPanel() {
     <div className="panel-body" ref={containerRef} role="listbox" aria-label="Objects" onKeyDown={onKeyDown}>
       <div className="panel-section-label">Services</div>
       {services.length === 0 && <p className="panel-hint">Way tool: drag or click to lay infrastructure; it starts one service you can recolor.</p>}
-      {services.map((sv) => {
+      {servicesShown.visible.map((sv) => {
         const active = selection?.kind === "service" && selection.id === sv.id;
         return (
           <button
@@ -63,6 +134,7 @@ export function LinesPanel() {
           </button>
         );
       })}
+      <ShowMoreRow hiddenCount={servicesShown.hiddenCount} onClick={() => expandSection("services")} />
 
       {waysByType.length > 0 && <div className="panel-section-label" style={{ marginTop: 16 }}>Infrastructure</div>}
       {waysByType.map((group) => (
@@ -86,9 +158,10 @@ export function LinesPanel() {
           })}
         </div>
       ))}
+      <ShowMoreRow hiddenCount={waysHiddenCount} onClick={() => expandSection("ways")} />
 
       {stations.length > 0 && <div className="panel-section-label" style={{ marginTop: 16 }}>Stations</div>}
-      {stations.map((st, i) => {
+      {stationsShown.visible.map((st, i) => {
         const active = selection?.kind === "station" && selection.id === st.id;
         return (
           <button
@@ -104,9 +177,10 @@ export function LinesPanel() {
           </button>
         );
       })}
+      <ShowMoreRow hiddenCount={stationsShown.hiddenCount} onClick={() => expandSection("stations")} />
 
       {facilities.length > 0 && <div className="panel-section-label" style={{ marginTop: 16 }}>Facilities</div>}
-      {facilities.map((f) => {
+      {facilitiesShown.visible.map((f) => {
         const active = selection?.kind === "facility" && selection.id === f.id;
         return (
           <button
@@ -122,9 +196,10 @@ export function LinesPanel() {
           </button>
         );
       })}
+      <ShowMoreRow hiddenCount={facilitiesShown.hiddenCount} onClick={() => expandSection("facilities")} />
 
       {groups.length > 0 && <div className="panel-section-label" style={{ marginTop: 16 }}>Groups</div>}
-      {groups.map((g) => {
+      {groupsShown.visible.map((g) => {
         const active = selection?.kind === "group" && selection.id === g.id;
         return (
           <button
@@ -141,6 +216,7 @@ export function LinesPanel() {
           </button>
         );
       })}
+      <ShowMoreRow hiddenCount={groupsShown.hiddenCount} onClick={() => expandSection("groups")} />
     </div>
   );
 }

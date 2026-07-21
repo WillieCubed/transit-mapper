@@ -33,6 +33,12 @@ export interface WorkbenchProps {
   viewSwitcher: ReactNode;
   /** Select/Way/Station/Facility — the drawing-tool palette. */
   modeToolbar: ReactNode;
+  /** A background import's live status (ImportProgressPill) — stacked
+   *  directly above modeToolbar in the same centered column, sharing its
+   *  responsive positioning (the mobile pb-14 lift above the bottom sheet,
+   *  the sheet-expanded fade) rather than guessing its own fixed offset.
+   *  Null/undefined when nothing's importing. */
+  importStatus?: ReactNode;
 }
 
 /**
@@ -54,7 +60,7 @@ export interface WorkbenchProps {
  * with the chrome hidden, not fade with it. So the map renders as this
  * component's own sibling in App.tsx, unaffected by whatever this does.
  */
-export function Workbench({ loadError, brand, menuPanel, supplementalPanel, hasSupplementalContent, primaryToolbar, viewSwitcher, modeToolbar }: WorkbenchProps) {
+export function Workbench({ loadError, brand, menuPanel, supplementalPanel, hasSupplementalContent, primaryToolbar, viewSwitcher, modeToolbar, importStatus }: WorkbenchProps) {
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const clearSelection = useEditor((s) => s.select);
   const backToSelectTool = useEditor((s) => s.setTool);
@@ -147,7 +153,8 @@ export function Workbench({ loadError, brand, menuPanel, supplementalPanel, hasS
             bearing: without them the dock silently vanishes on desktop the
             moment anything gets selected. Confirmed live — this exact
             regression is why they're called out instead of assumed. ---- */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-14 md:pb-0">
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-2 pb-14 md:pb-0">
+          {importStatus && <div className="pointer-events-auto">{importStatus}</div>}
           <div
             className={`transition-opacity duration-150 md:pointer-events-auto md:opacity-100 ${
               sheetExpanded ? "pointer-events-none opacity-0" : "pointer-events-auto opacity-100"
