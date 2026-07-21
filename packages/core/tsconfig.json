@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    // DOM only for the ambient fetch/crypto/structuredClone typings (part of
+    // lib.dom.d.ts) — core has no actual DOM/browser dependency, but these
+    // WHATWG globals are what both consumers (browser + Workers runtime)
+    // provide at runtime, and core must type-check standalone for either.
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"]
+}

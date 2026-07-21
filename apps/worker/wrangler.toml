@@ -1,0 +1,17 @@
+name = "transitmapper"
+main = "src/index.ts"
+compatibility_date = "2024-11-06"
+
+# Serve the built SPA. The Worker runs first and handles /api/*; every other
+# request is forwarded to the static assets (SPA fallback to index.html).
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "transitmapper"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "src/migrations"

@@ -1,0 +1,19 @@
+{
+  "name": "@transitmapper/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck:run": "tsc -b --noEmit",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@transitmapper/core": "workspace:*",
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "wrangler": "^3.91.0"
+  }
+}

@@ -1,27 +1,37 @@
 # Project structure
 
-TransitMapper is a Vite + React + TypeScript single-page app with an
-optional Cloudflare Worker backend for sharing. The layering rule that
-organizes everything: **model → store → rendering/UI**, with purity
-increasing toward the model.
+TransitMapper is a pnpm workspace: a Vite + React + TypeScript single-page
+app, an optional Cloudflare Worker backend for sharing, and a shared
+domain-model package both depend on. The layering rule that organizes
+everything: **model → store → rendering/UI**, with purity increasing toward
+the model.
 
 ```
-src/
-  model/       Pure domain: types, catalogs, geometry math, routing. No DOM,
-               no network (import.ts's one fetch excepted), no store access.
-  geometry/    Pure derived geometry: lane offsets, junction footprints.
-  editor/      The zustand store (all mutation) and the keyboard system.
-  map/         MapLibre integration: layers, pointer interactions, canvas.
-  ui/          React components. Thin: read the store, call actions.
-  style/       How catalog kinds LOOK (colors, widths, dashes, icons).
-  share/       Export (PNG/SVG/JSON) and the share-API client.
-  storage/     Local persistence.
-scripts/       verify.ts — the test suite.
-worker/        Cloudflare Worker + D1 migrations for shared snapshots.
-docs/          This documentation.
+packages/
+  core/          The shared domain model — no DOM, no store, no React.
+    src/
+      model/     Pure domain: types, catalogs, geometry math, routing.
+      geometry/  Pure derived geometry: lane offsets, junction footprints.
+      share/     contract.ts — the wire shapes both the app and worker use.
+apps/
+  web/           The Vite React SPA.
+    src/
+      editor/    The zustand store (all mutation) and the keyboard system.
+      map/       MapLibre integration: layers, pointer interactions, canvas.
+      ui/        React components. Thin: read the store, call actions.
+      style/     How catalog kinds LOOK (colors, widths, dashes, icons).
+      share/     Export (PNG/SVG/JSON) and the share-API client.
+      storage/   Local persistence.
+    scripts/     verify.ts — the test suite.
+  worker/        Cloudflare Worker + D1 migrations for shared snapshots.
+docs/            This documentation.
 ```
 
-## src/model/ — the domain
+`@transitmapper/core` is consumed straight from source (no build step) via
+subpath imports, e.g. `@transitmapper/core/model/catalog` — both `apps/web`
+and `apps/worker` depend on it as a workspace package.
+
+## packages/core/src/model/ — the domain
 
 - `system.ts` — every record in a saved document ([Data model](data-model.md)).
 - `catalog.ts` — every kind ([Catalogs](catalogs.md)).
@@ -40,7 +50,7 @@ docs/          This documentation.
 - `cost.ts` — rough cost estimation.
 - `ids.ts` — id generation.
 
-## src/geometry/ — derived street geometry
+## packages/core/src/geometry/ — derived street geometry
 
 - `streets.ts` — per-lane polylines, divider lines, and direction arrows
   derived from a way's profile; trimming at junctions.
@@ -50,7 +60,7 @@ docs/          This documentation.
 Both are pure and memoized; nothing here is stored. See
 [Geometry and routing](../explanation/geometry-and-routing.md).
 
-## src/editor/ — mutation and input
+## apps/web/src/editor/ — mutation and input
 
 - `store.ts` — the single zustand store. Every change to the system goes
   through an action here; undo checkpoints, junction bookkeeping, station
@@ -58,7 +68,7 @@ Both are pure and memoized; nothing here is stored. See
 - `keymap.ts` — the declarative keyboard table
   ([Keyboard shortcuts](keyboard-shortcuts.md)).
 
-## src/map/ — MapLibre
+## apps/web/src/map/ — MapLibre
 
 - `layers.ts` — turns the system into GeoJSON sources and layers per view;
   owns paint order (street surfaces below footprints, labels on top).
@@ -70,7 +80,7 @@ Both are pure and memoized; nothing here is stored. See
 - `basemap.ts`, `icons.ts`, `mapRef.ts`, `selectionFocus.ts` — supporting
   pieces.
 
-## src/ui/ — components
+## apps/web/src/ui/ — components
 
 `Workbench.tsx` is the shell that arranges everything; `Toolbar.tsx` is the
 bottom dock; `Inspector.tsx` (with `NodeInspector.tsx`,
@@ -80,7 +90,8 @@ plus dialogs (export, import, share, schedule, systems) and primitives
 
 ## Testing
 
-`npm run verify` runs `scripts/verify.ts`: hundreds of deterministic checks
-over the model, profile operations, migrations, junction geometry, routing,
-store actions, and layer emission — no browser required. `npm run typecheck`
-covers both the app and the worker. Both must pass before a PR.
+`pnpm verify` runs `apps/web/scripts/verify.ts`: hundreds of deterministic
+checks over the model, profile operations, migrations, junction geometry,
+routing, store actions, and layer emission — no browser required.
+`pnpm typecheck` covers `packages/core`, `apps/web`, and `apps/worker`. Both
+must pass before a PR. Each command fans out per-package via Turborepo.

@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "transitmapper",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@transitmapper/web", "dev"],
       "port": 5173
     }
   ]

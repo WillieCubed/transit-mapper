@@ -47,19 +47,23 @@ the document.
 ## Quick start
 
 ```sh
-npm install
-npm run dev        # editor at http://localhost:5173
+pnpm install
+pnpm dev        # editor at http://localhost:5173
 ```
 
 Other commands:
 
 ```sh
-npm run verify     # run the test suite (scripts/verify.ts)
-npm run typecheck  # TypeScript, app + worker
-npm run build      # production build
+pnpm verify     # run the test suite (apps/web/scripts/verify.ts)
+pnpm typecheck  # TypeScript, app + worker
+pnpm build      # production build
 ```
 
-The share/fork backend is a Cloudflare Worker with D1 (`npm run worker:dev`),
+`typecheck`, `build`, and `verify` run through [Turborepo](https://turborepo.com)
+for caching — a repeat run with unchanged inputs replays instantly instead of
+re-invoking `tsc`/`vite`/`tsx`.
+
+The share/fork backend is a Cloudflare Worker with D1 (`pnpm worker:dev`),
 but the editor runs fully without it.
 
 ## Documentation
@@ -91,7 +95,7 @@ Near-term direction, in rough order:
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup,
 conventions, and what makes a good change here. The short version: the
 catalogs are data, the model stays pure, and every behavior change comes
-with a check in `scripts/verify.ts`.
+with a check in `apps/web/scripts/verify.ts`.
 
 ## License
 
