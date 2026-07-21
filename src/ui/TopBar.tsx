@@ -54,10 +54,13 @@ export function TopBarBrand() {
   const { toggleUi } = useUi();
   return (
     <>
-      {!readOnly && <FileMenu />}
-      <span className="brand">
-        <span className="btn-label">TransitMapper</span>
-      </span>
+      {readOnly ? (
+        <span className="brand">
+          <span className="btn-label">TransitMapper</span>
+        </span>
+      ) : (
+        <FileMenu />
+      )}
       <span className="brand-hide-ui">
         <IconButton icon="sidebar" size={17} label={"Hide UI (\\)"} onClick={toggleUi} />
       </span>

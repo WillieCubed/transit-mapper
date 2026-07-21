@@ -2,12 +2,13 @@ import { useEditor } from "../editor/EditorProvider";
 import { exportSystemJson } from "../share/jsonExport";
 import { DropdownMenu, DropdownMenuItem } from "./DropdownMenu";
 import { Icon } from "./Icon";
-import { IconButton } from "./IconButton";
 import { useUi } from "./UiProvider";
 
 /** Figma-style file menu: New/Import/Export, tucked behind one trigger in
  *  the left panel instead of sitting loose among the top bar's action
- *  buttons — these are whole-document actions, not in-place edits. */
+ *  buttons — these are whole-document actions, not in-place edits. The
+ *  trigger is the app wordmark itself: icon + "TransitMapper" as ONE
+ *  surface with one hover, not a lone icon square next to a dead label. */
 export function FileMenu() {
   const system = useEditor((s) => s.system);
   const readOnly = useEditor((s) => s.readOnly);
@@ -17,7 +18,15 @@ export function FileMenu() {
   if (readOnly) return null;
 
   return (
-    <DropdownMenu align="start" trigger={<IconButton icon="file" size={17} label="File menu" />}>
+    <DropdownMenu
+      align="start"
+      trigger={
+        <button type="button" className="btn btn-plain brand-btn" title="File menu" aria-label="File menu">
+          <Icon name="file" size={17} />
+          <span className="btn-label brand-name">TransitMapper</span>
+        </button>
+      }
+    >
       <DropdownMenuItem onSelect={newSystem}>
         <Icon name="file" size={17} /> New system
       </DropdownMenuItem>

@@ -148,6 +148,12 @@ input { font: inherit; }
 .app-chrome[data-ui-state="closed"] { animation: fade-out 160ms ease-in forwards; }
 
 .brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: var(--fs-title-sm); letter-spacing: -0.02em; }
+/* The wordmark IS the File-menu trigger — file icon + "TransitMapper" as one
+   .btn-plain surface, so hovering anywhere on it highlights the whole unit.
+   Tighter left padding than .btn's 12px keeps the file glyph at (nearly) the
+   same inset the old icon-only 34px box centered it to, preserving
+   .panel-brand's edge-alignment math. */
+.brand-btn { padding: 0 10px 0 8px; gap: 8px; font-weight: 700; font-size: var(--fs-title-sm); letter-spacing: -0.02em; }
 .system-name {
   border: 1px solid transparent; border-radius: 8px;
   padding: 4px 8px; font-size: var(--fs-body-md); color: var(--text); background: transparent;
@@ -1123,3 +1129,7 @@ button.chip-removable-label:hover { text-decoration: underline; }
 .actions-collapsed .primary-btn .btn-label { display: none; }
 .mobile-topleft .brand,
 .mobile-topleft .brand-hide-ui { display: none; }
+/* Mobile keeps the File trigger but not the wordmark inside it — the
+   combined brand button collapses back to an icon-only square there. */
+.mobile-topleft .brand-btn { padding: 0; width: 34px; justify-content: center; }
+.mobile-topleft .brand-btn .btn-label { display: none; }
