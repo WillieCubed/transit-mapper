@@ -12,6 +12,7 @@ interface Env {
 }
 
 const MAX_BODY_BYTES = 1_000_000; // ~1 MB — generous for a hand-drawn system.
+const ANONYMOUS_SHARE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days.
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -32,10 +33,11 @@ app.post("/api/systems", async (c) => {
 
   const id = shortId(10);
   const now = Date.now();
+  const expiresAt = now + ANONYMOUS_SHARE_TTL_MS;
   await c.env.DB.prepare(
-    "INSERT INTO systems (id, name, data, created_at) VALUES (?, ?, ?, ?)",
+    "INSERT INTO systems (id, name, data, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
   )
-    .bind(id, system.name.slice(0, 200), JSON.stringify(system), now)
+    .bind(id, system.name.slice(0, 200), JSON.stringify(system), now, expiresAt)
     .run();
 
   return c.json<CreateShareResponse>({ id });
