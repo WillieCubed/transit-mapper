@@ -13,7 +13,7 @@ run_worker_first = true
 [[d1_databases]]
 binding = "DB"
 database_name = "transitmapper"
-database_id = "44186de0-9a7f-4041-8d11-1c09eb7a11f6"
+database_id = "5516498a-4473-468e-a1c9-a9dee4762960"
 migrations_dir = "src/migrations"
 
 [triggers]
