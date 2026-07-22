@@ -14,10 +14,14 @@
     "build": "turbo run build:run",
     "typecheck": "turbo run typecheck:run",
     "verify": "turbo run verify:run",
-    "deploy": "pnpm run build && pnpm --filter @transitmapper/worker deploy"
+    "deploy": "pnpm run build && pnpm --filter @transitmapper/worker deploy",
+    "bootstrap": "tsx scripts/bootstrap/cold-start.ts"
   },
   "devDependencies": {
+    "@clack/prompts": "^1.4.0",
+    "@types/node": "^24.0.0",
     "turbo": "^2.10.5",
+    "tsx": "^4.23.1",
     "typescript": "^7.0.2"
   }
 }

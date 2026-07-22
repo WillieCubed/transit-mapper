@@ -107,9 +107,11 @@ explicitly rather than scripted on their behalf:
    → copy the returned `database_id` into `wrangler.toml`.
 2. **Apply migrations to the remote database:**
    `npx wrangler d1 migrations apply transitmapper --remote`
-3. **Create a Cloudflare API token** (dashboard → My Profile → API Tokens)
-   scoped to: `Workers Scripts:Edit`, `Workers Routes:Edit` (for the custom
-   domain route), `D1:Edit`, restricted to the account. Add it as
+3. **Create a Cloudflare API token** (dashboard → account-scoped API
+   Tokens page) starting from the "Edit Cloudflare Workers" template
+   (`Account · Workers Scripts · Edit` + `Zone · Workers Routes · Edit` —
+   Workers Routes is zone-scoped, not account-scoped), plus one added row:
+   `Account · D1 · Edit`. Add the resulting token as
    `CLOUDFLARE_API_TOKEN` under a `production` GitHub Environment secret
    (repo Settings → Environments → New environment `production` → add
    secret). Add `CLOUDFLARE_ACCOUNT_ID` as an Environment variable (not

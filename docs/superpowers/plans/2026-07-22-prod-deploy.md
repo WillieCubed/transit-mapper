@@ -4,7 +4,7 @@
 
 **Goal:** Push to `main` triggers an automatic production deploy of TransitMapper to `map.lasvegasfortransit.org` via Cloudflare Workers; every PR/non-main push runs a typecheck + dependency-audit CI gate first.
 
-**Architecture:** A shared composite GitHub Action (`setup-node-pnpm`, copied verbatim from the `website` repo) installs Node+pnpm. `ci.yml` runs on PRs/non-main pushes and gates on `pnpm typecheck` + `pnpm audit`. `deploy-production.yml` runs on push to `main` and calls the existing root `pnpm run deploy` script (build + `wrangler deploy`) inside a `production`-scoped GitHub Environment holding the Cloudflare credentials. `apps/worker/wrangler.toml` gains a custom-domain route. A handful of steps (API token creation, real D1 database id, DNS/zone attachment) require the user's own Cloudflare account access and are manual, not scripted.
+**Architecture:** A shared composite GitHub Action (`setup-node-pnpm`, copied verbatim from `github.com/LasVegansForTransit/website` — the org's other Cloudflare-deployed project, an Astro site on Cloudflare Pages, referred to as "`website`" throughout this plan) installs Node+pnpm. `ci.yml` runs on PRs/non-main pushes and gates on `pnpm typecheck` + `pnpm audit`. `deploy-production.yml` runs on push to `main` and calls the existing root `pnpm run deploy` script (build + `wrangler deploy`) inside a `production`-scoped GitHub Environment holding the Cloudflare credentials. `apps/worker/wrangler.toml` gains a custom-domain route. A handful of steps (API token creation, real D1 database id, DNS/zone attachment) require the user's own Cloudflare account access and are manual, not scripted.
 
 **Tech Stack:** GitHub Actions, Cloudflare Workers (`wrangler deploy`), pnpm/Turborepo monorepo already in place.
 
@@ -370,11 +370,11 @@ shape as the local `--local` runs already done in this repo's history.
 
 - [ ] **Step 3: Create a Cloudflare API token**
 
-Cloudflare dashboard → My Profile → API Tokens → Create Token → Custom
-token, scoped to (this account only):
-- `Workers Scripts:Edit`
-- `Workers Routes:Edit` (needed for the custom domain route)
-- `D1:Edit`
+Cloudflare dashboard → account-scoped API Tokens page → Create Token →
+start from the "Edit Cloudflare Workers" template (this already includes
+the correct `Account · Workers Scripts · Edit` and `Zone · Workers Routes ·
+Edit` permissions — Workers Routes is a zone-level permission, not an
+account-level one), then add one more row: `Account · D1 · Edit`.
 
 - [ ] **Step 4: Add GitHub Environment secrets**
 
