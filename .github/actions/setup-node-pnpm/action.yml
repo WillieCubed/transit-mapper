@@ -1,0 +1,30 @@
+name: Setup Node + pnpm
+description: >
+  Install pnpm (version pinned via the repo's `packageManager` field), set up
+  Node with the pnpm store cache, and install dependencies with a frozen
+  lockfile. Caller must `actions/checkout` first.
+
+inputs:
+  node-version:
+    description: Node version (defaults to the engines.node minimum, 24).
+    required: false
+    default: '24'
+
+runs:
+  using: composite
+  steps:
+    # `packageManager: pnpm@x.y.z` in package.json is the source of truth for
+    # the pnpm version; pnpm/action-setup picks it up automatically when no
+    # `version` input is given.
+    - name: Setup pnpm
+      uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
+
+    - name: Setup Node ${{ inputs.node-version }}
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: pnpm
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile

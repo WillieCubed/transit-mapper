@@ -32,7 +32,7 @@ The root `package.json` currently has `packageManager: "pnpm@11.10.0"` but no `e
   "type": "module",
   "packageManager": "pnpm@11.10.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "scripts": {
     "dev": "pnpm --filter @transitmapper/web dev",
@@ -62,9 +62,9 @@ description: >
 
 inputs:
   node-version:
-    description: Node version (defaults to the engines.node minimum, 22).
+    description: Node version (defaults to the engines.node minimum, 24).
     required: false
-    default: '22'
+    default: '24'
 
 runs:
   using: composite
