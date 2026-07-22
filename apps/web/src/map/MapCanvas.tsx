@@ -40,7 +40,7 @@ import {
 } from "./layers";
 import { landmarksFeatureCollection } from "./landmarks";
 import { getMap, setMap } from "./mapRef";
-import { attachVehicleAnimation } from "./vehicles";
+import { attachVehicleAnimation } from "../sim/vehicles";
 import type { Map as MLMap } from "maplibre-gl";
 
 const OWN_LAYER_IDS = new Set(LAYER_SPECS.map((l) => l.id));

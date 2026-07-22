@@ -5,15 +5,10 @@ import { useEditor, useEditorStore } from "./editor/EditorProvider";
 import { createEmptySystem } from "@transitmapper/core/model/serialize";
 import { fetchShare } from "./share/api";
 import { getActiveId, listLibrary, loadSystemById, migrateLegacySingleSlot, saveToLibrary, setActiveId } from "./storage/localStore";
-import { ExportDialog } from "./ui/ExportDialog";
 import { Icon } from "./ui/Icon";
-import { ImportDialog } from "./ui/ImportDialog";
 import { ImportProgressPill } from "./ui/ImportProgressPill";
 import { Inspector } from "./ui/Inspector";
 import { LinesPanel } from "./ui/LinesPanel";
-import { ShareDialog } from "./ui/ShareDialog";
-import { ShortcutsDialog } from "./ui/ShortcutsDialog";
-import { SystemsDialog } from "./ui/SystemsDialog";
 import { Toolbar } from "./ui/Toolbar";
 import { TopBarActions, TopBarBrand, ViewSwitch } from "./ui/TopBar";
 import { useDelayedUnmount } from "./ui/useDelayedUnmount";
@@ -28,6 +23,14 @@ import "./ui/app.css";
 // dialog is never opened. App already renders it conditionally below, the
 // shape React.lazy wants.
 const GtfsImportDialog = lazy(() => import("./ui/GtfsImportDialog").then((m) => ({ default: m.GtfsImportDialog })));
+// Same reasoning applied to every other dialog gated behind an explicit user
+// action (activeDialog === "..."/shortcutsOpen) rather than rendered on
+// initial paint — none of these need to be in the first-paint bundle either.
+const ExportDialog = lazy(() => import("./ui/ExportDialog").then((m) => ({ default: m.ExportDialog })));
+const ImportDialog = lazy(() => import("./ui/ImportDialog").then((m) => ({ default: m.ImportDialog })));
+const ShareDialog = lazy(() => import("./ui/ShareDialog").then((m) => ({ default: m.ShareDialog })));
+const ShortcutsDialog = lazy(() => import("./ui/ShortcutsDialog").then((m) => ({ default: m.ShortcutsDialog })));
+const SystemsDialog = lazy(() => import("./ui/SystemsDialog").then((m) => ({ default: m.SystemsDialog })));
 
 const SHARE_PREFIX = "/s/";
 
@@ -139,16 +142,36 @@ export function App() {
           <span className="ui-restore-name">{name}</span>
         </button>
       )}
-      {shortcutsOpen && <ShortcutsDialog onClose={closeShortcuts} />}
-      {activeDialog === "import" && <ImportDialog onClose={closeDialog} />}
+      {shortcutsOpen && (
+        <Suspense fallback={null}>
+          <ShortcutsDialog onClose={closeShortcuts} />
+        </Suspense>
+      )}
+      {activeDialog === "import" && (
+        <Suspense fallback={null}>
+          <ImportDialog onClose={closeDialog} />
+        </Suspense>
+      )}
       {activeDialog === "gtfs" && (
         <Suspense fallback={null}>
           <GtfsImportDialog onClose={closeDialog} />
         </Suspense>
       )}
-      {activeDialog === "export" && <ExportDialog onClose={closeDialog} />}
-      {activeDialog === "share" && <ShareDialog onClose={closeDialog} />}
-      {activeDialog === "systems" && <SystemsDialog onClose={closeDialog} />}
+      {activeDialog === "export" && (
+        <Suspense fallback={null}>
+          <ExportDialog onClose={closeDialog} />
+        </Suspense>
+      )}
+      {activeDialog === "share" && (
+        <Suspense fallback={null}>
+          <ShareDialog onClose={closeDialog} />
+        </Suspense>
+      )}
+      {activeDialog === "systems" && (
+        <Suspense fallback={null}>
+          <SystemsDialog onClose={closeDialog} />
+        </Suspense>
+      )}
     </div>
   );
 }

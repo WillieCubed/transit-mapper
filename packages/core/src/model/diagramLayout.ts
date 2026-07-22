@@ -10,6 +10,10 @@
 //
 // This never touches the real system — every consumer (buildFeatures, camera
 // framing) is handed a derived, transient TransitSystem for rendering only.
+// Pure/serializable in-out and DOM/store-free like routeGraph.ts — safe to
+// move to a Web Worker or run server-side later if the relaxation solver
+// ever needs to run on a system too large to iterate 60 times synchronously
+// on the main thread.
 import { metersFromOrigin, offsetMeters, pointAtT } from "./geo";
 import type { LngLat, TransitSystem, Way } from "./system";
 

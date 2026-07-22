@@ -64,7 +64,7 @@ import { anchorOnWay, routeBetween, routePath } from "@transitmapper/core/model/
 import { bearingDegrees, formatBearing, haversineMeters, snap, squareFootprint } from "@transitmapper/core/model/geo";
 import type { CrossSection, LngLat, Node, Service, Way } from "@transitmapper/core/model/system";
 import { armRefKey, getComponent, laneRefKey, withComponent, withoutComponent } from "@transitmapper/core/model/components";
-import { buildTimetable, dwellStopsForPattern, metersAtElapsed, VEHICLE_SPEED_MPS } from "../src/map/vehicles";
+import { buildTimetable, dwellStopsForPattern, metersAtElapsed, VEHICLE_SPEED_MPS } from "../src/sim/vehicles";
 
 let failures = 0;
 function check(name: string, cond: boolean) {

@@ -221,6 +221,12 @@ const CROSSING_CHUNK_BUDGET_MS = 8;
  * IssuesPopover's live badge stays accurate WITHOUT ever blocking a frame,
  * on a check that can otherwise run several seconds straight on a large real
  * import.
+ *
+ * Already Worker-shaped: an async generator yielding per-chunk is exactly
+ * the pattern a Web Worker would use too (post a progress message per yield
+ * instead of yielding to the event loop) — moving this off the main thread
+ * later is a transport change around this same generator, not a rewrite of
+ * the algorithm.
  */
 export async function* crossingsWithoutJoiningChunked(system: TransitSystem): AsyncGenerator<Issue[]> {
   const joined = jointWayPairs(system);

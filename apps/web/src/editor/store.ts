@@ -8,6 +8,7 @@ import { wayCrossings } from "@transitmapper/core/model/validate";
 import { shortId } from "@transitmapper/core/model/ids";
 import { createEmptySystem } from "@transitmapper/core/model/serialize";
 import { armRefKey, getComponent, laneRefKey, withComponent, withoutComponent } from "@transitmapper/core/model/components";
+import { createFacility, createGroup as createGroupEntity, createStation } from "@transitmapper/core/model/system";
 import type {
   CrossSection,
   DrivingSide,
@@ -359,7 +360,7 @@ export interface EditorState {
   moveStation: (id: string, coord: LngLat, anchor?: StationAnchor) => void;
   setStationName: (id: string, name: string) => void;
   /** How long a vehicle dwells here before departing, in seconds — undefined
-   *  reverts to the animation's own default (see map/vehicles.ts). */
+   *  reverts to the animation's own default (see sim/vehicles.ts). */
   setStationDwellSeconds: (id: string, seconds: number | undefined) => void;
   deleteStation: (id: string) => void;
 
@@ -1878,15 +1879,14 @@ export function createEditorStore() {
       }),
 
     addStation: (coord, anchor) => {
-      const id = shortId();
-      const station: Station = { id, coord, ...(anchor ? { anchor } : {}) };
+      const station = createStation(coord, anchor);
       set((s) => ({
         system: touch({ ...s.system, stations: [...s.system.stations, station] }),
-        selection: { kind: "station", id },
+        selection: { kind: "station", id: station.id },
         focusNameToken: s.focusNameToken + 1,
-        focusNameStationId: id,
+        focusNameStationId: station.id,
       }));
-      return id;
+      return station.id;
     },
 
     consumeFocusName: (id) =>
@@ -2003,8 +2003,8 @@ export function createEditorStore() {
       })),
 
     addFacility: (typeId, geometry) => {
-      const id = shortId();
-      const facility: Facility = { id, typeId, geometry };
+      const facility = createFacility(typeId, geometry);
+      const id = facility.id;
       set((s) => {
         let system: TransitSystem = { ...s.system, facilities: [...s.system.facilities, facility] };
         // THE BASE CONCEPT: a station's drawn border defines its land and
@@ -2020,7 +2020,7 @@ export function createEditorStore() {
             ? { ...system, groups: system.groups.map((g) => (g.id === existing.id ? { ...g, memberIds: [...g.memberIds, id] } : g)) }
             : {
                 ...system,
-                groups: [...system.groups, { id: shortId(), name: host.name ? `${host.name} complex` : undefined, memberIds: [host.id, id] }],
+                groups: [...system.groups, createGroupEntity([host.id, id], host.name ? `${host.name} complex` : undefined)],
               };
         }
         return { system: touch(system), selection: { kind: "facility", id } };
@@ -2041,10 +2041,9 @@ export function createEditorStore() {
       })),
 
     createGroup: (memberIds, name) => {
-      const id = shortId();
-      const group: Group = { id, name, memberIds: [...new Set(memberIds)] };
-      set((s) => ({ system: touch({ ...s.system, groups: [...s.system.groups, group] }), selection: { kind: "group", id } }));
-      return id;
+      const group = createGroupEntity(memberIds, name);
+      set((s) => ({ system: touch({ ...s.system, groups: [...s.system.groups, group] }), selection: { kind: "group", id: group.id } }));
+      return group.id;
     },
 
     addGroupMember: (groupId, memberId) =>

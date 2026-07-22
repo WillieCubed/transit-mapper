@@ -11,7 +11,12 @@
 // (editor/store.ts) later inserts a real control point + splits there.
 //
 // Pure and network-free like the rest of model/: everything is testable
-// data-in/data-out, and the store owns all mutation.
+// data-in/data-out, and the store owns all mutation. This also makes the
+// Dijkstra core a safe future candidate for moving off the main thread (a Web
+// Worker) or server-side (apps/worker) if a real simulation ever needs to
+// route at a scale that matters — nothing here touches store.ts, the DOM, or
+// any other stateful context, so relocating it is a call-site change, not a
+// rewrite.
 
 import { haversineMeters, nearestInsertionPoint } from "./geo";
 import type { LngLat, TransitSystem, Way } from "./system";

@@ -810,7 +810,7 @@ export const LAYER_SPECS: LayerSpecification[] = [
     },
   },
   {
-    // One dot per service, driven by map/vehicles.ts's own rAF loop directly
+    // One dot per service, driven by sim/vehicles.ts's own rAF loop directly
     // pushing to SRC_VEHICLES — bypasses the store entirely (ambient motion,
     // never a system mutation), so its data is never touched by buildFeatures.
     id: LYR_VEHICLES,
