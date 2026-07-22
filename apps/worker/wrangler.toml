@@ -18,3 +18,7 @@ migrations_dir = "src/migrations"
 
 [triggers]
 crons = ["0 0 * * *"]
+
+[[routes]]
+pattern = "map.lasvegasfortransit.org"
+custom_domain = true
