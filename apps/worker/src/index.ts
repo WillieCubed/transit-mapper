@@ -86,4 +86,15 @@ app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 // client routes like /s/:id), served by the assets binding.
 app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 
-export default app;
+async function scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+  await env.DB.prepare(
+    "DELETE FROM systems WHERE expires_at IS NOT NULL AND expires_at < ?",
+  )
+    .bind(Date.now())
+    .run();
+}
+
+export default {
+  fetch: app.fetch,
+  scheduled,
+};
