@@ -47,12 +47,17 @@ app.post("/api/systems", async (c) => {
 app.get("/api/systems/:id", async (c) => {
   const id = c.req.param("id");
   const row = await c.env.DB.prepare(
-    "SELECT id, data, created_at FROM systems WHERE id = ?",
+    "SELECT id, data, created_at, expires_at FROM systems WHERE id = ?",
   )
     .bind(id)
-    .first<{ id: string; data: string; created_at: number }>();
+    .first<{ id: string; data: string; created_at: number; expires_at: number | null }>();
 
   if (!row) return c.json({ error: "Not found" }, 404);
+
+  if (row.expires_at !== null && row.expires_at < Date.now()) {
+    await c.env.DB.prepare("DELETE FROM systems WHERE id = ?").bind(id).run();
+    return c.json({ error: "Not found" }, 404);
+  }
 
   return c.json<GetShareResponse>({
     id: row.id,
